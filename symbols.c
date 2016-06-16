@@ -14,17 +14,24 @@ static struct t_weechat_plugin *weechat_plugin;
 
 void wdg_init();
 void wdg_end();
-void wdg_connect();
+void wdg_command(struct t_gui_buffer *buffer, char *cmd);
 void wdg_input(struct t_gui_buffer *buffer, const char *data, const char *input_data);
 
 static int discord_cmd_callback(const void *pointer, void *data, struct t_gui_buffer *buffer,
                                 int argc, char **argv, char **argv_eol)
 {
-    wdg_connect();
+    if (argc < 2)
+    {
+        wdg_command(buffer, NULL);
+    }
+    else
+    {
+        wdg_command(buffer, argv_eol[1]);
+    }
     return WEECHAT_RC_OK;
 }
 
-int weechat_plugin_init (struct t_weechat_plugin *plugin, int argc, char *argv[])
+int weechat_plugin_init(struct t_weechat_plugin *plugin, int argc, char *argv[])
 {
     (void)argc;
     (void)argv;
@@ -35,7 +42,7 @@ int weechat_plugin_init (struct t_weechat_plugin *plugin, int argc, char *argv[]
     return WEECHAT_RC_OK;
 }
 
-int weechat_plugin_end (struct t_weechat_plugin *plugin)
+int weechat_plugin_end(struct t_weechat_plugin *plugin)
 {
     (void)plugin;
     wdg_end();
