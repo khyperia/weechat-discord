@@ -65,6 +65,22 @@ const char* wdc_config_get_plugin(const char* message)
     return weechat_config_get_plugin(message);
 }
 
+int wdc_config_set_plugin(const char* message, const char* value)
+{
+    switch (weechat_config_set_plugin (message, value))
+    {
+        case WEECHAT_CONFIG_OPTION_SET_OK_CHANGED:
+            return 0;
+        case WEECHAT_CONFIG_OPTION_SET_OK_SAME_VALUE:
+            return 1;
+        case WEECHAT_CONFIG_OPTION_SET_OPTION_NOT_FOUND:
+            return 2;
+        case WEECHAT_CONFIG_OPTION_SET_ERROR:
+        default:
+            return 3;
+    }
+}
+
 struct t_gui_buffer *wdc_buffer_search(const char *name)
 {
     return weechat_buffer_search("weechat-discord", name);
@@ -91,4 +107,21 @@ struct t_gui_buffer *wdc_buffer_new(const char *name, const char *data)
 void wdc_buffer_set(struct t_gui_buffer *buffer, const char *property, const char *value)
 {
     weechat_buffer_set(buffer, property, value);
+}
+
+void wdc_hook_signal_send(const char *signal, const char *type_data, void *signal_data)
+{
+    weechat_hook_signal_send(signal, type_data, signal_data);
+}
+
+void wdc_nicklist_add_nick(struct t_gui_buffer *buffer, const char *nick)
+{
+    struct t_gui_nick_group *grp = weechat_nicklist_search_group(buffer, NULL, "root_group");
+    if (!grp)
+    {
+        grp = weechat_nicklist_add_group(buffer, NULL, "root_group",
+            "weechat.color.nicklist_group", 1);
+    }
+    const char *color = weechat_info_get("nick_color", nick);
+    (void)weechat_nicklist_add_nick(buffer, grp, nick, color, "", "", 1);
 }

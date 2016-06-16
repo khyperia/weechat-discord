@@ -8,6 +8,17 @@ import (
 	"unsafe"
 	"github.com/bwmarrin/discordgo"
 	"fmt"
+	"strings"
+)
+
+const (
+	// note: config_* is the name of the setting, not the actual setting value
+	config_email = "email"
+	config_password = "password"
+	connect_cmd = "connect"
+	email_cmd = "email "
+	password_cmd = "password "
+	crash_cmd = "crash"
 )
 
 var global_dg *discordgo.Session
@@ -51,6 +62,30 @@ func config_get_plugin(option_name string) string {
 	return C.GoString(ptr)
 }
 
+func config_set_plugin(option_name string, value string) string {
+	before := config_get_plugin(option_name)
+	option := C.CString(option_name)
+	defer C.free(unsafe.Pointer(option))
+	val := C.CString(value)
+	defer C.free(unsafe.Pointer(val))
+	result := C.wdc_config_set_plugin(option, val)
+	switch result {
+	case 0:
+		return "Option successfully changed from " + before + " to " + value
+	case 1:
+		if before == "" {
+			return "Option set to " + value
+		} else {
+			return "Option already contained " + value
+		}
+	case 2:
+		return "Option not found"
+	//case 3:
+	default:
+		return "Error when setting that option"
+	}
+}
+
 func buffer_search(name string) *C.struct_t_gui_buffer {
 	str := C.CString(name)
 	defer C.free(unsafe.Pointer(str))
@@ -73,6 +108,18 @@ func buffer_set(buffer *C.struct_t_gui_buffer, property string, value string) {
 	C.wdc_buffer_set(buffer, prop, val)
 }
 
+func hook_signal_send(signal string, type_data string, signal_data unsafe.Pointer) {
+	sig := C.CString(signal)
+	defer C.free(unsafe.Pointer(sig))
+	td := C.CString(type_data)
+	defer C.free(unsafe.Pointer(td))
+	C.wdc_hook_signal_send(sig, td, signal_data)
+}
+
+func load_backlog(buffer *C.struct_t_gui_buffer) {
+	hook_signal_send("logger_backlog", C.WEECHAT_HOOK_SIGNAL_POINTER, unsafe.Pointer(buffer))
+}
+
 //export wdg_init
 func wdg_init() {
 	// ...
@@ -90,10 +137,18 @@ func wdg_command(buffer *C.struct_t_gui_buffer, params_c *C.char) {
 	if params_c != nil {
 		params = C.GoString(params_c)
 	}
-	if params == "connect" {
+	const (
+	)
+	if params == connect_cmd {
 		connect(buffer)
-	} else if params == "crash" {
-		crashycrash()
+	} else if strings.HasPrefix(params, email_cmd) {
+		params = params[len(email_cmd):]
+		print_buffer(buffer, config_set_plugin(config_email, params))
+	} else if strings.HasPrefix(params, password_cmd) {
+		params = params[len(password_cmd):]
+		print_buffer(buffer, config_set_plugin(config_password, params))
+	} else if params == crash_cmd {
+		intentional_crash()
 	} else {
 		print_buffer(buffer, "[discord]\tUnknown command: " + params)
 	}
@@ -106,10 +161,16 @@ func wdg_input(buffer *C.struct_t_gui_buffer, data *C.char, input_data *C.char) 
 }
 
 func connect(buffer *C.struct_t_gui_buffer) {
-	email := config_get_plugin("email")
-	password := config_get_plugin("password")
+	email := config_get_plugin(config_email)
+	password := config_get_plugin(config_password)
 	if email == "" || password == "" {
-		print_buffer(buffer, "Please set: plugins.var.weechat-discord.{email,password}")
+		print_buffer(buffer, "Error: plugins.var.weechat-discord.{email,password} unset. Run:")
+		if email == "" {
+			print_buffer(buffer, "/discord email youremail@example.com")
+		}
+		if password == "" {
+			print_buffer(buffer, "/discord password hunter2")
+		}
 		return
 	}
 	print_buffer(buffer, "Discord: Connecting");
@@ -168,7 +229,7 @@ func open_buffers(buffer *C.struct_t_gui_buffer, dg *discordgo.Session) {
 	}
 }
 
-func crashycrash() {
+func intentional_crash() {
 	var dg *discordgo.Session = nil
 	print_main(fmt.Sprint(dg.Debug))
 }
@@ -178,27 +239,31 @@ func get_buffer(server *discordgo.Guild, channel *discordgo.Channel) *C.struct_t
 		return nil
 	}
 	var server_id string
-	//var server_name string
+	var server_name string
 	if server == nil {
 		server_id = "0"
-		//server_name = "discord-pm"
+		server_name = "pm"
 	} else {
 		server_id = server.ID
-		//server_name = server.Name
+		server_name = server.Name
 	}
 	channel_id := channel.ID
 	var channel_name string
 	if channel.Recipient == nil {
-		channel_name = channel.Name
+		channel_name = "#" + channel.Name
 	} else {
 		channel_name = channel.Recipient.Username
 	}
 	buffer_id := server_id + "." + channel_id
+	buffer_name := server_name + " " + channel_name
 	buffer := buffer_search(buffer_id)
 	if buffer == nil {
 		buffer = buffer_new(buffer_id, channel_id)
-		buffer_set(buffer, "short_name", channel_name)
-		buffer_set(buffer, "title", channel_name)
+		buffer_set(buffer, "short_name", buffer_name)
+		buffer_set(buffer, "title", channel.Topic)
+		buffer_set(buffer, "type", "formatted")
+		buffer_set(buffer, "nicklist", "1")
+		load_backlog(buffer)
 	}
 	return buffer
 }

@@ -24,8 +24,8 @@ IMPORTANT: weechat is **Very Not Okay** with weechat-discord.so being modified w
 
 Right now, due to it being a work in progress, things aren't fully fleshed out yet.
 
-    /set plugins.var.weechat-discord.email your.email@example.com
-    /set plugins.var.weechat-discord.password yourpassword
-    /discord
+    /discord email your.email@example.com
+    /discord password yourpassword
+    /discord connect
 
-Note that it will eventually probably be something like `/discord connect`, as well as other helper subcommands of `/discord` (like setting those email/password variables), but again, this is a work in progress.
+(exact syntax of commands subject to change)
