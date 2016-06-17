@@ -4,7 +4,7 @@
 // wdg = Weechat Discord Go
 // wdc = Weechat Discord C
 
-WEECHAT_PLUGIN_NAME("weechat-discord");
+WEECHAT_PLUGIN_NAME("weecord");
 WEECHAT_PLUGIN_DESCRIPTION("Discord support for weechat");
 WEECHAT_PLUGIN_AUTHOR("khyperia <khyperia@live.com>");
 WEECHAT_PLUGIN_VERSION("1.0");
@@ -51,13 +51,18 @@ int weechat_plugin_end(struct t_weechat_plugin *plugin)
 
 void wdc_print(struct t_gui_buffer *buffer, const char *message)
 {
-    weechat_printf(buffer, message);
+    weechat_printf(buffer, "%s", message);
 }
 
 void wdc_print_main(const char* message)
 {
     struct t_gui_buffer *buffer = weechat_buffer_search_main();
     wdc_print(buffer, message);
+}
+
+void wdc_print_tags(struct t_gui_buffer *buffer, const char *tags, const char *message)
+{
+    weechat_printf_tags(buffer, tags, "%s", message);
 }
 
 const char* wdc_config_get_plugin(const char* message)
@@ -83,7 +88,7 @@ int wdc_config_set_plugin(const char* message, const char* value)
 
 struct t_gui_buffer *wdc_buffer_search(const char *name)
 {
-    return weechat_buffer_search("weechat-discord", name);
+    return weechat_buffer_search("weecord", name);
 }
 
 int buffer_input_callback(const void *pointer, void *datatmp, struct t_gui_buffer *buffer, const char *input_data)
@@ -124,4 +129,9 @@ void wdc_nicklist_add_nick(struct t_gui_buffer *buffer, const char *nick)
     }
     const char *color = weechat_info_get("nick_color", nick);
     (void)weechat_nicklist_add_nick(buffer, grp, nick, color, "", "", 1);
+}
+
+const char *wdc_info_get(const char *info_name, const char *arguments)
+{
+    return weechat_info_get(info_name, arguments);
 }
