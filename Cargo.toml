@@ -6,6 +6,7 @@ build = "build.rs"
 
 [build-dependencies]
 gcc = "0.3"
+pkg-config = "*"
 
 [lib]
 name = "weecord"
