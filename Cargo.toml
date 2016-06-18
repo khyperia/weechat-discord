@@ -13,3 +13,4 @@ name = "weecord"
 crate-type = ["dylib"]
 
 [dependencies]
+discord = "^0.5.0"
