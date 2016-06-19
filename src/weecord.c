@@ -2,10 +2,16 @@
 #include <string.h>
 #include <weechat-plugin.h>
 
+
+void wdr_init(void);
+void wdr_end(void);
+void wdr_command(void *, char *);
+void wdr_input(void *, char *, char *);
+
 WEECHAT_PLUGIN_NAME("weecord");
 WEECHAT_PLUGIN_DESCRIPTION("Discord support for weechat");
 WEECHAT_PLUGIN_AUTHOR("khyperia <khyperia@live.com>");
-WEECHAT_PLUGIN_VERSION("1.0");
+WEECHAT_PLUGIN_VERSION("1.1");
 WEECHAT_PLUGIN_LICENSE("GPL3");
 
 static struct t_weechat_plugin *weechat_plugin;
@@ -41,6 +47,12 @@ int weechat_plugin_end(struct t_weechat_plugin *plugin)
   wdr_end();
   return WEECHAT_RC_OK;
 }
+
+void wdc_print(struct t_gui_buffer *buffer, const char *message)
+{
+  weechat_printf(buffer, "%s", message);
+}
+
 void wdc_print_main(const char* message)
 {
     struct t_gui_buffer *buffer = weechat_buffer_search_main();

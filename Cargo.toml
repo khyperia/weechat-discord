@@ -14,3 +14,4 @@ crate-type = ["dylib"]
 
 [dependencies]
 discord = "^0.5.0"
+libc = "0.2.0"
