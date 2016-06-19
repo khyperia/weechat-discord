@@ -12,5 +12,6 @@ fn main() {
         config.include(path);
     }
     config.file("src/weecord.c");
+    config.flag("-Werror");
     config.compile("libweecord.a");
 }
