@@ -1,143 +1,30 @@
 extern crate discord;
 extern crate libc;
 
-use libc::{c_void, c_char, c_int};
+#[macro_use]
+mod macros;
+pub mod ffi;
+
+use libc::{c_char, c_int};
 use std::ffi::{CString, CStr};
 use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::error::Error;
 use discord::{Discord, Connection, State, ChannelRef};
 use discord::model::{Event, ChannelId, ServerId, RoleId, User};
+use ffi::{Buffer, MAIN_BUFFER, PokeableFd, get_global_state, set_global_state};
 
-macro_rules! try_opt {
-    ($expr:expr) => (match $expr { Some(e) => e, None => return None })
-}
-
-macro_rules! try_opt_ref {
-    ($expr:expr) => (match *$expr { Some(ref e) => e, None => return None })
-}
-
-struct Buffer {
-    ptr: *const c_void,
-}
-
-struct ConnectionState {
+pub struct ConnectionState {
     discord: Discord,
     state: State,
     connection: Connection,
     events: Mutex<VecDeque<Event>>,
-    pipe: [c_int; 2],
-}
-
-type ConnectionStateWrap = Option<ConnectionState>;
-
-const MAIN_BUFFER: Buffer = Buffer { ptr: 0 as *const c_void };
-
-impl Buffer {
-    fn print(&self, message: &str) {
-        extern "C" {
-            fn wdc_print(buffer: *const c_void, message: *const c_char);
-        }
-        unsafe {
-            let msg = CString::new(message).unwrap();
-            wdc_print(self.ptr, msg.as_ptr());
-        }
-    }
-
-    fn print_tags(&self, tags: &str, message: &str) {
-        extern "C" {
-            fn wdc_print_tags(buffer: *const c_void, tags: *const c_char, message: *const c_char);
-        }
-        unsafe {
-            let msg = CString::new(message).unwrap();
-            let tags = CString::new(tags).unwrap();
-            wdc_print_tags(self.ptr, tags.as_ptr(), msg.as_ptr());
-        }
-    }
-
-    fn load_backlog(&self) {
-        extern "C" {
-            fn wdc_load_backlog(sig_data: *mut c_void);
-        }
-        unsafe {
-            wdc_load_backlog(self.ptr as *mut c_void);
-        }
-    }
-}
-
-// make sure to mem::forget the result of this!
-fn get_crazy(raw: *const c_void) -> Box<ConnectionStateWrap> {
-    unsafe { Box::from_raw(raw as *mut Option<ConnectionState>) }
-}
-
-#[no_mangle]
-pub extern "C" fn wdr_init() {
-    extern "C" {
-        fn wdc_hook_command(command: *const c_char,
-                            description: *const c_char,
-                            args: *const c_char,
-                            args_description: *const c_char,
-                            completion: *const c_char,
-                            callback_pointer: *const c_void);
-    }
-    MAIN_BUFFER.print("Hello, Rust!");
-    let state: Box<ConnectionStateWrap> = Box::new(None);
-    unsafe {
-        let cmd = CString::new("discord").unwrap();
-        let desc = CString::new("Confdsa").unwrap();
-        let args = CString::new("").unwrap();
-        let argdesc = CString::new("").unwrap();
-        let compl = CString::new("").unwrap();
-        wdc_hook_command(cmd.as_ptr(),
-                         desc.as_ptr(),
-                         args.as_ptr(),
-                         argdesc.as_ptr(),
-                         compl.as_ptr(),
-                         Box::into_raw(state) as *const c_void);
-    }
-    // state is moved via into_raw, equivalent to mem::forget
+    pipe: PokeableFd,
 }
 
 #[no_mangle]
 pub extern "C" fn wdr_end() {
     // TODO: Kill/join worker and drop state
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wdr_command(buffer_c: *const c_void,
-                                     state_c: *const c_void,
-                                     command_c: *const c_char) {
-    let buffer = Buffer { ptr: buffer_c };
-    let mut state = get_crazy(state_c);
-    let command = CStr::from_ptr(command_c).to_str().unwrap();
-    run_command(buffer, &mut *state, command);
-    std::mem::forget(state);
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wdr_input(buffer: *const c_void,
-                                   channel_id: *const c_char,
-                                   input_str: *const c_char,
-                                   state_c: *const c_void) {
-    let buffer = Buffer { ptr: buffer };
-    let channel_id = ChannelId(CStr::from_ptr(channel_id).to_str().unwrap().parse().unwrap());
-    let input_str = CStr::from_ptr(input_str).to_str().unwrap();
-    let mut state = get_crazy(state_c);
-    input(&mut *state, buffer, &channel_id, input_str);
-    std::mem::forget(state);
-}
-
-#[no_mangle]
-pub extern "C" fn wdr_hook_fd_callback(state_c: *const c_void, fd: c_int) {
-    let mut tmp = 0 as c_char;
-    unsafe {
-        while libc::read(fd, (&mut tmp) as *mut c_char as *mut c_void, 1) == 1 {
-            MAIN_BUFFER.print("Unpoke!");
-        }
-    }
-    let mut state = get_crazy(state_c);
-    process_events(&mut *state);
-    std::mem::forget(state);
 }
 
 fn set_option(name: &str, value: &str) -> String {
@@ -180,62 +67,12 @@ fn get_option(name: &str) -> Option<String> {
     }
 }
 
-fn buffer_search(name: &str) -> Option<Buffer> {
-    extern "C" {
-        fn wdc_buffer_search(name: *const c_char) -> *const c_void;
-    }
-    unsafe {
-        let name_c = CString::new(name).unwrap();
-        let result = wdc_buffer_search(name_c.as_ptr());
-        if result.is_null() {
-            None
-        } else {
-            Some(Buffer { ptr: result })
-        }
-    }
-}
-
-fn buffer_new(state: &mut ConnectionStateWrap,
-              name: &str,
-              channel_id: &ChannelId)
-              -> Option<Buffer> {
-    extern "C" {
-        fn wdc_buffer_new(name: *const c_char,
-                          pointer: *const c_void,
-                          data: *const c_char)
-                          -> *const c_void;
-    }
-    unsafe {
-        let name = CString::new(name).unwrap();
-        let state = state as *mut ConnectionStateWrap as *mut c_void;
-        let id = format!("{}", channel_id.0);
-        let id = CString::new(id).unwrap();
-        let result = wdc_buffer_new(name.as_ptr(), state, id.as_ptr());
-        if result.is_null() {
-            None
-        } else {
-            Some(Buffer { ptr: result })
-        }
-
-    }
-}
-
-fn buffer_set(buffer: &Buffer, property: &str, value: &str) {
-    extern "C" {
-        fn wdc_buffer_set(buffer: *const c_void, property: *const c_char, value: *const c_char);
-    }
-    unsafe {
-        let property = CString::new(property).unwrap();
-        let value = CString::new(value).unwrap();
-        wdc_buffer_set(buffer.ptr, property.as_ptr(), value.as_ptr());
-    }
-}
 
 fn user_set_option(buffer: Buffer, name: &str, value: &str) {
     buffer.print(&set_option(name, value));
 }
 
-fn connect(buffer: Buffer, state: &mut ConnectionStateWrap) {
+fn connect(buffer: Buffer) {
     let (email, password) = match (get_option("email"), get_option("password")) {
         (Some(e), Some(p)) => (e, p),
         (email, password) => {
@@ -265,54 +102,34 @@ fn connect(buffer: Buffer, state: &mut ConnectionStateWrap) {
         }
     };
     let dis_state = State::new(ready);
-    let mut pipe: [c_int; 2] = [0; 2];
-    unsafe {
-        extern "C" {
-            fn wdc_hook_fd(fd: c_int, pointer: *const c_void) -> c_int;
-        }
-        libc::pipe2(&mut pipe[0] as &mut c_int as *mut c_int, libc::O_NONBLOCK);
-        // TODO: This might need a box?
-        wdc_hook_fd(pipe[0], state as *mut ConnectionStateWrap as *mut c_void);
-    }
 
     // TODO: on_ready
     buffer.print("Discord: Connected");
-    {
-        *state = Some(ConnectionState {
-            discord: discord,
-            state: dis_state,
-            connection: connection,
-            events: Mutex::new(VecDeque::new()),
-            pipe: pipe,
-        });
-    }
-    let state = match *state {
-        Some(ref mut x) => x,
-        None => panic!("Impossible"),
-    };
-    // say "haha screw you" to the borrow checker
-    let mut state = unsafe { Box::from_raw(state as *mut ConnectionState) };
+    let _ = set_global_state(ConnectionState {
+        discord: discord,
+        state: dis_state,
+        connection: connection,
+        events: Mutex::new(VecDeque::new()),
+        pipe: PokeableFd::new(Box::new(process_events)),
+    });
     std::thread::spawn(move || {
+        let state = get_global_state().unwrap();
         while let Ok(event) = state.connection.recv_event() {
             state.state.update(&event);
             {
                 let locked = state.events.get_mut().unwrap();
                 locked.push_back(event);
             }
-            unsafe {
-                //MAIN_BUFFER.print("Poke!");
-                libc::write(state.pipe[1],
-                            &(0 as c_char) as *const c_char as *const c_void,
-                            1);
-            }
+            state.pipe.poke();
         }
         std::mem::forget(state);
     });
 }
 
-fn run_command(buffer: Buffer, state: &mut ConnectionStateWrap, command: &str) {
+fn run_command(buffer: Buffer, state: Option<&'static mut ConnectionState>, command: &str) {
+    let _ = state;
     if command == "connect" {
-        connect(buffer, state);
+        connect(buffer);
     } else if command.starts_with("email ") {
         user_set_option(buffer, "email", &command["email ".len()..]);
     } else if command.starts_with("password ") {
@@ -322,7 +139,10 @@ fn run_command(buffer: Buffer, state: &mut ConnectionStateWrap, command: &str) {
     }
 }
 
-fn input(state: &mut ConnectionStateWrap, buffer: Buffer, channel_id: &ChannelId, message: &str) {
+fn input(state: Option<&'static mut ConnectionState>,
+         buffer: Buffer,
+         channel_id: &ChannelId,
+         message: &str) {
     let _ = state;
     let _ = buffer;
     let _ = channel_id;
@@ -330,14 +150,15 @@ fn input(state: &mut ConnectionStateWrap, buffer: Buffer, channel_id: &ChannelId
     // TODO: impl
 }
 
-fn process_events(state: &mut ConnectionStateWrap) {
-    while let Some(event) = match *state {
-        Some(ref mut s) => s.events.get_mut().unwrap().pop_front(),
-        None => {
-            MAIN_BUFFER.print("safdsa"); // TODO: what
-            return;
-        }
-    } {
+fn process_events(state: &'static mut ConnectionState) {
+    loop {
+        let event = {
+            let mut queue = state.events.lock().unwrap();
+            match queue.pop_front() {
+                Some(event) => event,
+                None => return,
+            }
+        };
         if let discord::model::Event::MessageCreate(message) = event {
             // TODO: message.mention_roles
             let is_self = is_self_mentioned(state,
@@ -355,9 +176,9 @@ fn process_events(state: &mut ConnectionStateWrap) {
     }
 }
 
-fn get_buffer(state: &mut ConnectionStateWrap, channel_id: &ChannelId) -> Option<Buffer> {
+fn get_buffer(state: &'static ConnectionState, channel_id: &ChannelId) -> Option<Buffer> {
     let (server_name, channel_name, server_id, channel_id) = {
-        let channel = try_opt!(try_opt_ref!(state).state.find_channel(channel_id));
+        let channel = try_opt!(state.state.find_channel(channel_id));
         match channel {
             ChannelRef::Private(ch) => {
                 ("discord-pm".into(), ch.recipient.name.clone(), ServerId(0), ch.id)
@@ -369,14 +190,14 @@ fn get_buffer(state: &mut ConnectionStateWrap, channel_id: &ChannelId) -> Option
     };
     let buffer_id = format!("{}.{}", server_id.0, channel_id.0);
     let buffer_name = format!("{} {}", server_name, channel_name);
-    let buffer = match buffer_search(&buffer_id) {
+    let buffer = match Buffer::search(&buffer_id) {
         Some(buffer) => buffer,
         None => {
-            let buffer = try_opt!(buffer_new(state, &buffer_id, &channel_id));
-            buffer_set(&buffer, "short_name", &buffer_name);
-            buffer_set(&buffer, "title", "Channel Title");
-            buffer_set(&buffer, "type", "formatted");
-            buffer_set(&buffer, "nicklist", "1");
+            let buffer = try_opt!(Buffer::new(&buffer_id, &channel_id));
+            buffer.set("short_name", &buffer_name);
+            buffer.set("title", "Channel Title");
+            buffer.set("type", "formatted");
+            buffer.set("nicklist", "1");
             buffer.load_backlog();
             buffer
         }
@@ -384,7 +205,7 @@ fn get_buffer(state: &mut ConnectionStateWrap, channel_id: &ChannelId) -> Option
     Some(buffer)
 }
 
-fn is_self_mentioned(state: &mut ConnectionStateWrap,
+fn is_self_mentioned(state: &'static ConnectionState,
                      channel_id: &ChannelId,
                      mention_everyone: bool,
                      mentions: Option<Vec<User>>,
@@ -393,10 +214,6 @@ fn is_self_mentioned(state: &mut ConnectionStateWrap,
     if mention_everyone {
         return true;
     }
-    let state = match *state {
-        Some(ref mut x) => x,
-        None => return false,
-    };
     let me = state.state.user();
     if let Some(mentions) = mentions {
         for mention in mentions {
@@ -425,7 +242,7 @@ fn is_self_mentioned(state: &mut ConnectionStateWrap,
     return false;
 }
 
-fn display(state: &mut ConnectionStateWrap,
+fn display(state: &'static ConnectionState,
            content: &str,
            channel_id: &ChannelId,
            author: Option<User>,

@@ -4,8 +4,8 @@
 
 void wdr_init(void);
 void wdr_end(void);
-void wdr_command(const void*, const void*, const char*);
-void wdr_input(const void*, const char*, const char*, const void*);
+void wdr_command(const void*, const char*);
+void wdr_input(const void*, const char*, const char*);
 void wdr_hook_fd_callback(const void*, int);
 
 WEECHAT_PLUGIN_NAME("weecord");
@@ -40,21 +40,19 @@ hook_command_callback(const void* pointer, void* data,
                       char** argv_eol)
 {
   if (argc < 2) {
-    wdr_command(buffer, pointer, NULL);
+    wdr_command(buffer, NULL);
   } else {
-    wdr_command(buffer, pointer, argv_eol[1]);
+    wdr_command(buffer, argv_eol[1]);
   }
   return WEECHAT_RC_OK;
 }
 
 void
 wdc_hook_command(const char* command, const char* description, const char* args,
-                 const char* args_description, const char* completion,
-                 const void* callback_pointer)
+                 const char* args_description, const char* completion)
 {
   (void)weechat_hook_command(command, description, args, args_description,
-                             completion, hook_command_callback,
-                             callback_pointer, NULL);
+                             completion, hook_command_callback, NULL, NULL);
 }
 
 void
@@ -103,7 +101,7 @@ buffer_input_callback(const void* pointer, void* datatmp,
                       struct t_gui_buffer* buffer, const char* input_data)
 {
   const char* data = (const char*)datatmp;
-  wdr_input(buffer, data, input_data, pointer);
+  wdr_input(buffer, data, input_data);
   return WEECHAT_RC_OK;
 }
 
@@ -115,10 +113,10 @@ buffer_close_callback(const void* pointer, void* data,
 }
 
 struct t_gui_buffer*
-wdc_buffer_new(const char* name, const void* pointer, const char* data)
+wdc_buffer_new(const char* name, const char* data)
 {
   // strdup result auto-freed by weechat on buffer close
-  return weechat_buffer_new(name, buffer_input_callback, pointer, strdup(data),
+  return weechat_buffer_new(name, buffer_input_callback, NULL, strdup(data),
                             buffer_close_callback, NULL, NULL);
 }
 
@@ -149,10 +147,16 @@ hook_fd_callback(const void* pointer, void* data, int fd)
   return WEECHAT_RC_OK;
 }
 
-void
+void*
 wdc_hook_fd(int fd, const void* pointer)
 {
-  weechat_hook_fd(fd, 1, 0, 0, hook_fd_callback, pointer, NULL);
+  return weechat_hook_fd(fd, 1, 0, 0, hook_fd_callback, pointer, NULL);
+}
+
+void
+wdc_unhook(struct t_hook* hook)
+{
+    weechat_unhook(hook);
 }
 
 void
