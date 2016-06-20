@@ -136,6 +136,12 @@ wdc_hook_signal_send(const char* signal, const char* type_data,
   weechat_hook_signal_send(signal, type_data, signal_data);
 }
 
+void
+wdc_load_backlog(void* buffer)
+{
+  wdc_hook_signal_send("logger_backlog", WEECHAT_HOOK_SIGNAL_POINTER, buffer);
+}
+
 static int
 hook_fd_callback(const void* pointer, void* data, int fd)
 {
