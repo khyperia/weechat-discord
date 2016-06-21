@@ -12,7 +12,7 @@ pub const MAIN_BUFFER: Buffer = Buffer { ptr: 0 as *const c_void };
 
 static mut global_state: *mut ConnectionState = 0 as *mut ConnectionState;
 
-pub fn get_global_state() -> Option<&'static mut ConnectionState> {
+fn get_global_state() -> Option<&'static mut ConnectionState> {
     unsafe { global_state.as_mut() }
 }
 
@@ -20,6 +20,16 @@ pub fn set_global_state(state: ConnectionState) {
     unsafe {
         global_state = Box::into_raw(Box::new(state));
     }
+}
+
+fn drop_global_state() {
+    unsafe {
+        if global_state.is_null() {
+            return;
+        };
+        Box::from_raw(global_state);
+        global_state = 0 as *mut ConnectionState
+    };
 }
 
 impl Buffer {
@@ -102,6 +112,11 @@ impl Buffer {
 pub struct PokeableFd {
     hook: *mut c_void, // struct t_hook*
     pipe: [c_int; 2],
+    _callback: Box<fn(&'static mut ConnectionState)>,
+}
+
+pub struct PokeableFdPoker {
+    fd: c_int,
 }
 
 impl PokeableFd {
@@ -109,23 +124,29 @@ impl PokeableFd {
         extern "C" {
             fn wdc_hook_fd(fd: c_int, pointer: *const c_void) -> *mut c_void;
         }
-        // TODO: Drop the box
         let mut pipe = [0; 2];
         unsafe { pipe2(&mut pipe[0] as *mut c_int, O_NONBLOCK) };
         let hook = unsafe {
-            wdc_hook_fd(pipe[0], Box::into_raw(callback) as *const fn(&'static mut ConnectionState) as *const c_void)
+            // haha screw you borrowck
+            let callback = &*callback as *const fn(&'static mut ConnectionState) as *const c_void;
+            wdc_hook_fd(pipe[0], callback)
         };
         PokeableFd {
             hook: hook,
             pipe: pipe,
+            _callback: callback,
         }
     }
 
+    pub fn get_poker(&self) -> PokeableFdPoker {
+        PokeableFdPoker { fd: self.pipe[1] }
+    }
+}
+
+impl PokeableFdPoker {
     pub fn poke(&self) {
         unsafe {
-            write(self.pipe[1],
-                  &(0 as c_char) as *const c_char as *const c_void,
-                  1);
+            write(self.fd, &(0 as c_char) as *const c_char as *const c_void, 1);
         }
     }
 }
@@ -141,6 +162,11 @@ impl Drop for PokeableFd {
             close(self.pipe[1]);
         }
     }
+}
+
+#[no_mangle]
+pub extern "C" fn wdr_end() {
+    drop_global_state();
 }
 
 #[no_mangle]
@@ -184,7 +210,9 @@ pub unsafe extern "C" fn wdr_command(buffer_c: *const c_void, command_c: *const 
     let buffer = Buffer { ptr: buffer_c };
     let state = get_global_state();
     let command = CStr::from_ptr(command_c).to_str().unwrap();
-    run_command(buffer, state, command);
+    if run_command(buffer, state, command) == false {
+        drop_global_state();
+    }
 }
 
 #[no_mangle]

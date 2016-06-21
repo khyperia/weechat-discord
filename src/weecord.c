@@ -156,7 +156,7 @@ wdc_hook_fd(int fd, const void* pointer)
 void
 wdc_unhook(struct t_hook* hook)
 {
-    weechat_unhook(hook);
+  weechat_unhook(hook);
 }
 
 void

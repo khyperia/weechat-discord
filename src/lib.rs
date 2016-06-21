@@ -7,24 +7,19 @@ pub mod ffi;
 
 use libc::{c_char, c_int};
 use std::ffi::{CString, CStr};
-use std::collections::VecDeque;
-use std::sync::Mutex;
+use std::mem::drop;
+use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::error::Error;
-use discord::{Discord, Connection, State, ChannelRef};
+use std::thread::spawn;
+use discord::{Discord, State, ChannelRef};
 use discord::model::{Event, ChannelId, ServerId, RoleId, User};
-use ffi::{Buffer, MAIN_BUFFER, PokeableFd, get_global_state, set_global_state};
+use ffi::{Buffer, MAIN_BUFFER, PokeableFd, set_global_state};
 
 pub struct ConnectionState {
-    discord: Discord,
+    _discord: Discord,
     state: State,
-    connection: Connection,
-    events: Mutex<VecDeque<Event>>,
-    pipe: PokeableFd,
-}
-
-#[no_mangle]
-pub extern "C" fn wdr_end() {
-    // TODO: Kill/join worker and drop state
+    events: Receiver<discord::Result<Event>>,
+    _pipe: PokeableFd,
 }
 
 fn set_option(name: &str, value: &str) -> String {
@@ -94,7 +89,7 @@ fn connect(buffer: Buffer) {
             return;
         }
     };
-    let (connection, ready) = match discord.connect() {
+    let (mut connection, ready) = match discord.connect() {
         Ok(ok) => ok,
         Err(err) => {
             buffer.print(&format!("Connection error: {}", err.description()));
@@ -103,43 +98,50 @@ fn connect(buffer: Buffer) {
     };
     let dis_state = State::new(ready);
 
-    // TODO: on_ready
+    // TODO: on_ready (open buffers, etc)
     buffer.print("Discord: Connected");
+    let (send, recv) = channel();
+    let pipe = PokeableFd::new(Box::new(process_events));
+    let pipe_poker = pipe.get_poker();
     let _ = set_global_state(ConnectionState {
-        discord: discord,
+        _discord: discord,
         state: dis_state,
-        connection: connection,
-        events: Mutex::new(VecDeque::new()),
-        pipe: PokeableFd::new(Box::new(process_events)),
+        events: recv,
+        _pipe: pipe,
     });
-    std::thread::spawn(move || {
-        let state = get_global_state().unwrap();
-        while let Ok(event) = state.connection.recv_event() {
-            state.state.update(&event);
-            {
-                let locked = state.events.get_mut().unwrap();
-                locked.push_back(event);
-            }
-            state.pipe.poke();
+    spawn(move || {
+        loop {
+            let event = connection.recv_event();
+            // note we want to send even if it's an error
+            match (event.is_err(), send.send(event)) {
+                // break if we failed to send, or got an error
+                (true, _) | (_, Err(_)) => break,
+                _ => (),
+            };
+            pipe_poker.poke();
         }
-        std::mem::forget(state);
+        drop(send);
+        pipe_poker.poke();
     });
 }
 
-fn run_command(buffer: Buffer, state: Option<&'static mut ConnectionState>, command: &str) {
+fn run_command(buffer: Buffer, state: Option<&mut ConnectionState>, command: &str) -> bool {
     let _ = state;
     if command == "connect" {
         connect(buffer);
+    } else if command == "disconnect" {
+        return false;
     } else if command.starts_with("email ") {
         user_set_option(buffer, "email", &command["email ".len()..]);
     } else if command.starts_with("password ") {
         user_set_option(buffer, "password", &command["password ".len()..]);
     } else {
-
+        buffer.print("Discord: unknown command");
     }
+    true
 }
 
-fn input(state: Option<&'static mut ConnectionState>,
+fn input(state: Option<&mut ConnectionState>,
          buffer: Buffer,
          channel_id: &ChannelId,
          message: &str) {
@@ -150,23 +152,38 @@ fn input(state: Option<&'static mut ConnectionState>,
     // TODO: impl
 }
 
-fn process_events(state: &'static mut ConnectionState) {
+fn process_events(state: &mut ConnectionState) {
     loop {
-        let event = {
-            let mut queue = state.events.lock().unwrap();
-            match queue.pop_front() {
-                Some(event) => event,
-                None => return,
+        let event = state.events.try_recv();
+        let event = match event {
+            Ok(event) => event,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => {
+                MAIN_BUFFER.print("Discord: Listening thread stopped!");
+                return;
             }
         };
+        let event = match event {
+            // TODO: Newer versions of Discord move this into Err
+            Ok(discord::model::Event::Closed(err)) => {
+                MAIN_BUFFER.print(&format!("Discord: listening thread closed with code - {}", err));
+                continue;
+            }
+            Ok(event) => event,
+            Err(err) => {
+                MAIN_BUFFER.print(&format!("Discord: listening thread had error - {}", err));
+                continue;
+            }
+        };
+        state.state.update(&event);
         if let discord::model::Event::MessageCreate(message) = event {
             // TODO: message.mention_roles
-            let is_self = is_self_mentioned(state,
+            let is_self = is_self_mentioned(&state,
                                             &message.channel_id,
                                             message.mention_everyone,
                                             Some(message.mentions),
                                             None);
-            display(state,
+            display(&state,
                     &message.content,
                     &message.channel_id,
                     Some(message.author),
@@ -176,7 +193,7 @@ fn process_events(state: &'static mut ConnectionState) {
     }
 }
 
-fn get_buffer(state: &'static ConnectionState, channel_id: &ChannelId) -> Option<Buffer> {
+fn get_buffer(state: &ConnectionState, channel_id: &ChannelId) -> Option<Buffer> {
     let (server_name, channel_name, server_id, channel_id) = {
         let channel = try_opt!(state.state.find_channel(channel_id));
         match channel {
@@ -205,7 +222,7 @@ fn get_buffer(state: &'static ConnectionState, channel_id: &ChannelId) -> Option
     Some(buffer)
 }
 
-fn is_self_mentioned(state: &'static ConnectionState,
+fn is_self_mentioned(state: &ConnectionState,
                      channel_id: &ChannelId,
                      mention_everyone: bool,
                      mentions: Option<Vec<User>>,
@@ -242,7 +259,7 @@ fn is_self_mentioned(state: &'static ConnectionState,
     return false;
 }
 
-fn display(state: &'static ConnectionState,
+fn display(state: &ConnectionState,
            content: &str,
            channel_id: &ChannelId,
            author: Option<User>,
