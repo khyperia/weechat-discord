@@ -16,7 +16,7 @@ use discord::model::{Event, ChannelId, ServerId, RoleId, User};
 use ffi::{Buffer, MAIN_BUFFER, PokeableFd, set_global_state};
 
 pub struct ConnectionState {
-    _discord: Discord,
+    discord: Discord,
     state: State,
     events: Receiver<discord::Result<Event>>,
     _pipe: PokeableFd,
@@ -103,7 +103,7 @@ fn connect(buffer: Buffer) {
     let pipe = PokeableFd::new(Box::new(process_events));
     let pipe_poker = pipe.get_poker();
     let _ = set_global_state(ConnectionState {
-        _discord: discord,
+        discord: discord,
         state: dis_state,
         events: recv,
         _pipe: pipe,
@@ -144,11 +144,15 @@ fn input(state: Option<&mut ConnectionState>,
          buffer: Buffer,
          channel_id: &ChannelId,
          message: &str) {
-    let _ = state;
-    let _ = buffer;
-    let _ = channel_id;
-    let _ = message;
-    // TODO: impl
+    let state = match state {
+        Some(state) => state,
+        None => return,
+    };
+    let result = state.discord.send_message(channel_id, message, "", false);
+    match result {
+        Ok(_) => (),
+        Err(err) => buffer.print(&format!("Discord: error sending message - {}", err)),
+    };
 }
 
 fn process_events(state: &mut ConnectionState) {
