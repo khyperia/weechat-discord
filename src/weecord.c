@@ -40,7 +40,7 @@ hook_command_callback(const void* pointer, void* data,
                       char** argv_eol)
 {
   if (argc < 2) {
-    wdr_command(buffer, NULL);
+    wdr_command(buffer, "");
   } else {
     wdr_command(buffer, argv_eol[1]);
   }

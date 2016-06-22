@@ -2,7 +2,7 @@
 name = "weecord"
 version = "0.1.0"
 dependencies = [
- "discord 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "discord 0.5.0 (git+https://github.com/SpaceManiac/discord-rs.git)",
  "gcc 0.3.28 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.12 (registry+https://github.com/rust-lang/crates.io-index)",
  "pkg-config 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -60,7 +60,7 @@ dependencies = [
 [[package]]
 name = "discord"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
+source = "git+https://github.com/SpaceManiac/discord-rs.git#3a8a83136b463f6d724181e9cc52be239f8a91da"
 dependencies = [
  "base64-rs 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "bitflags 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",

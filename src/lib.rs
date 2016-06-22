@@ -62,7 +62,6 @@ fn get_option(name: &str) -> Option<String> {
     }
 }
 
-
 fn user_set_option(buffer: Buffer, name: &str, value: &str) {
     buffer.print(&set_option(name, value));
 }
@@ -164,11 +163,6 @@ fn process_events(state: &mut ConnectionState) {
             }
         };
         let event = match event {
-            // TODO: Newer versions of Discord move this into Err
-            Ok(discord::model::Event::Closed(err)) => {
-                MAIN_BUFFER.print(&format!("Discord: listening thread closed with code - {}", err));
-                continue;
-            }
             Ok(event) => event,
             Err(err) => {
                 MAIN_BUFFER.print(&format!("Discord: listening thread had error - {}", err));
@@ -177,18 +171,16 @@ fn process_events(state: &mut ConnectionState) {
         };
         state.state.update(&event);
         if let discord::model::Event::MessageCreate(message) = event {
-            // TODO: message.mention_roles
             let is_self = is_self_mentioned(&state,
                                             &message.channel_id,
                                             message.mention_everyone,
                                             Some(message.mentions),
-                                            None);
+                                            Some(message.mention_roles));
             display(&state,
                     &message.content,
                     &message.channel_id,
                     Some(message.author),
                     is_self);
-            MAIN_BUFFER.print(&message.content);
         }
     }
 }

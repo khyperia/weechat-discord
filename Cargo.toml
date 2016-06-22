@@ -13,5 +13,6 @@ name = "weecord"
 crate-type = ["dylib"]
 
 [dependencies]
-discord = "^0.5.0"
+#discord = "^0.5.0"
+discord = { git = "https://github.com/SpaceManiac/discord-rs.git" }
 libc = "0.2.0"

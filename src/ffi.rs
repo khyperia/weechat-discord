@@ -178,8 +178,6 @@ pub extern "C" fn wdr_init() {
                             args_description: *const c_char,
                             completion: *const c_char);
     }
-    MAIN_BUFFER.print("Hello, Rust!");
-    // let state: Box<ConnectionStateWrap> = Box::new(None);
     unsafe {
         let cmd = CString::new("discord").unwrap();
         let desc = CString::new("Confdsa").unwrap();
