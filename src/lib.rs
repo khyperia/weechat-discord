@@ -15,9 +15,34 @@ use std::thread::spawn;
 use discord::{Discord, State, ChannelRef};
 use discord::model::{Event, Channel, ChannelType, ChannelId, ServerId, RoleId, User,
                      PossibleServer, Member};
-use ffi::{Buffer, MAIN_BUFFER, PokeableFd, set_global_state};
+use ffi::{Buffer, MAIN_BUFFER, PokeableFd};
 use regex::Regex;
 
+mod weechat {
+    pub const COMMAND: &'static str = "discord";
+    pub const DESCRIPTION: &'static str = "\
+Discord from the comfort of your favorite command-line IRC client!
+This plugin is a work in progress and could use your help.
+Check it out at https://github.com/khyperia/weechat-discord";
+    pub const ARGS: &'static str = "\
+                     connect
+                     disconnect
+                     email <email>
+                     password <password>";
+    pub const ARGDESC: &'static str = "\
+   connect: sign in to discord and open chat buffers
+disconnect: sign out of Discord and close chat buffers
+     email: set Discord login email
+  password: set Discord login password
+
+Example:
+  /discord email your.email@example.com
+  /discord password yourpassword
+  /discord connect
+
+";
+    pub const COMPLETIONS: &'static str = "connect || disconnect || email || password";
+}
 
 pub struct ConnectionState {
     discord: Discord,
@@ -25,6 +50,19 @@ pub struct ConnectionState {
     events: Receiver<discord::Result<Event>>,
     _pipe: PokeableFd,
 }
+
+// Called when plugin is loaded in Weechat
+pub fn init() {
+    ffi::hook_command(weechat::COMMAND,
+                      weechat::DESCRIPTION,
+                      weechat::ARGS,
+                      weechat::ARGDESC,
+                      weechat::COMPLETIONS);
+}
+
+// Called when plugin is unloaded in Weechat
+#[allow(unused)]
+pub fn end(state: &Option<ConnectionState>) {}
 
 fn set_option(name: &str, value: &str) -> String {
     extern "C" {
@@ -114,7 +152,7 @@ fn connect(buffer: Buffer) {
         _pipe: pipe,
     };
     process_event(&state, &Event::Ready(ready_clone));
-    set_global_state(state);
+    ffi::set_global_state(state);
     spawn(move || {
         loop {
             let event = connection.recv_event();

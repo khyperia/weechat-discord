@@ -171,25 +171,7 @@ pub extern "C" fn wdr_end() {
 
 #[no_mangle]
 pub extern "C" fn wdr_init() {
-    extern "C" {
-        fn wdc_hook_command(command: *const c_char,
-                            description: *const c_char,
-                            args: *const c_char,
-                            args_description: *const c_char,
-                            completion: *const c_char);
-    }
-    unsafe {
-        let cmd = CString::new("discord").unwrap();
-        let desc = CString::new("Confdsa").unwrap();
-        let args = CString::new("").unwrap();
-        let argdesc = CString::new("").unwrap();
-        let compl = CString::new("").unwrap();
-        wdc_hook_command(cmd.as_ptr(),
-                         desc.as_ptr(),
-                         args.as_ptr(),
-                         argdesc.as_ptr(),
-                         compl.as_ptr());
-    }
+    ::init();
 }
 
 #[no_mangle]
@@ -225,4 +207,26 @@ pub extern "C" fn wdr_hook_fd_callback(callback: *const c_void, fd: c_int) {
     let state = get_global_state().unwrap();
     func(state);
     forget(func);
+}
+
+pub fn hook_command(cmd: &str, desc: &str, args: &str, argdesc: &str, compl: &str) {
+    extern "C" {
+        fn wdc_hook_command(command: *const c_char,
+                            description: *const c_char,
+                            args: *const c_char,
+                            args_description: *const c_char,
+                            completion: *const c_char);
+    }
+    unsafe {
+        let cmd = CString::new(cmd).unwrap();
+        let desc = CString::new(desc).unwrap();
+        let args = CString::new(args).unwrap();
+        let argdesc = CString::new(argdesc).unwrap();
+        let compl = CString::new(compl).unwrap();
+        wdc_hook_command(cmd.as_ptr(),
+                         desc.as_ptr(),
+                         args.as_ptr(),
+                         argdesc.as_ptr(),
+                         compl.as_ptr());
+    }
 }
