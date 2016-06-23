@@ -1,5 +1,6 @@
 extern crate discord;
 extern crate libc;
+extern crate regex;
 
 #[macro_use]
 mod macros;
@@ -12,8 +13,10 @@ use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::error::Error;
 use std::thread::spawn;
 use discord::{Discord, State, ChannelRef};
-use discord::model::{Event, ChannelId, ServerId, RoleId, User};
+use discord::model::{Event, ChannelId, ServerId, RoleId, User, Member};
 use ffi::{Buffer, MAIN_BUFFER, PokeableFd, set_global_state};
+use regex::Regex;
+
 
 pub struct ConnectionState {
     discord: Discord,
@@ -255,6 +258,49 @@ fn is_self_mentioned(state: &ConnectionState,
     return false;
 }
 
+fn format_mention(name: &str) -> String {
+    format!("@{}", name)
+}
+
+fn format_mention_user(user: &User) -> String {
+    format_mention(&user.name)
+}
+
+fn format_mention_member(member: &Member) -> String {
+    if let Some(ref nick) = member.nick {
+        format_mention(nick)
+    } else {
+        format_mention_user(&member.user)
+    }
+}
+
+fn replace_mentions(state: &State, channel_id: &ChannelId, content: &str) -> String {
+    let re = Regex::new(r"<@(?P<id>\d+)>").unwrap();
+    re.replace_all(content, |ref captures: &regex::Captures| {
+        captures.name("id")
+            .and_then(|id| id.parse::<u64>().ok())
+            .and_then(|id| {
+                match state.find_channel(channel_id) {
+                    Some(ChannelRef::Private(ref private)) => {
+                        if private.recipient.id.0 == id {
+                            Some(format_mention_user(&private.recipient))
+                        } else {
+                            None
+                        }
+                    }
+                    Some(ChannelRef::Public(ref server, _)) => {
+                        server.members
+                            .iter()
+                            .find(|ref member| member.user.id.0 == id)
+                            .map(|ref member| format_mention_member(member))
+                    }
+                    _ => None,
+                }
+            })
+            .unwrap_or(format_mention("[unknown]"))
+    })
+}
+
 fn display(state: &ConnectionState,
            content: &str,
            channel_id: &ChannelId,
@@ -264,16 +310,19 @@ fn display(state: &ConnectionState,
         Some(buffer) => buffer,
         None => return,
     };
-    // TODO: Replace mentions
+
     let mut tags = Vec::new();
-    tags.push(if self_mentioned {
-            "notify_highlight"
-        } else {
-            "notify_message"
-        }
-        .into());
+    if self_mentioned {
+        tags.push("notify_highlight".into());
+    } else {
+        tags.push("notify_message".into());
+
+    }
     let name = author.map_or("[unknown]".into(), |x| x.name.replace(',', ""));
     tags.push(format!("nick_{}", name));
     // nick_color
-    buffer.print_tags(&tags.join(",".into()), &format!("{}\t{}", name, content));
+    buffer.print_tags(&tags.join(",".into()),
+                      &format!("{}\t{}",
+                               name,
+                               replace_mentions(&state.state, channel_id, content)));
 }
