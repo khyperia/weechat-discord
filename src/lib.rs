@@ -13,7 +13,8 @@ use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::error::Error;
 use std::thread::spawn;
 use discord::{Discord, State, ChannelRef};
-use discord::model::{Event, ChannelId, ServerId, RoleId, User, Member};
+use discord::model::{Event, Channel, ChannelType, ChannelId, ServerId, RoleId, User,
+                     PossibleServer, Member};
 use ffi::{Buffer, MAIN_BUFFER, PokeableFd, set_global_state};
 use regex::Regex;
 
@@ -98,6 +99,7 @@ fn connect(buffer: Buffer) {
             return;
         }
     };
+    let ready_clone = ready.clone();
     let dis_state = State::new(ready);
 
     // TODO: on_ready (open buffers, etc)
@@ -105,12 +107,14 @@ fn connect(buffer: Buffer) {
     let (send, recv) = channel();
     let pipe = PokeableFd::new(Box::new(process_events));
     let pipe_poker = pipe.get_poker();
-    let _ = set_global_state(ConnectionState {
+    let state = ConnectionState {
         discord: discord,
         state: dis_state,
         events: recv,
         _pipe: pipe,
-    });
+    };
+    process_event(&state, &Event::Ready(ready_clone));
+    set_global_state(state);
     spawn(move || {
         loop {
             let event = connection.recv_event();
@@ -177,17 +181,84 @@ fn process_events(state: &mut ConnectionState) {
             }
         };
         state.state.update(&event);
-        if let discord::model::Event::MessageCreate(message) = event {
+        process_event(state, &event);
+    }
+}
+
+fn process_event(state: &ConnectionState, event: &Event) {
+    match *event {
+        Event::Ready(ref ready) => {
+            for private in &ready.private_channels {
+                let _ = get_buffer(state, &private.id);
+            }
+            for server in &ready.servers {
+                let server = match *server {
+                    PossibleServer::Online(ref server) => server,
+                    PossibleServer::Offline(_) => continue,
+                };
+                for channel in &server.channels {
+                    let _ = get_buffer(state, &channel.id);
+                }
+            }
+        }
+        Event::MessageCreate(ref message) => {
             let is_self = is_self_mentioned(&state,
                                             &message.channel_id,
                                             message.mention_everyone,
-                                            Some(message.mentions),
-                                            Some(message.mention_roles));
+                                            Some(&message.mentions),
+                                            Some(&message.mention_roles));
             display(&state,
                     &message.content,
                     &message.channel_id,
-                    Some(message.author),
-                    is_self);
+                    Some(&message.author),
+                    is_self)
+        }
+        Event::MessageUpdate { ref channel_id,
+                               ref content,
+                               ref author,
+                               ref mention_everyone,
+                               ref mentions,
+                               ref mention_roles,
+                               .. } => {
+            let is_self = is_self_mentioned(&state,
+                                            &channel_id,
+                                            mention_everyone.unwrap_or(false),
+                                            mentions.as_ref(),
+                                            mention_roles.as_ref());
+            display(&state,
+                    content.as_ref().map(|x| &**x).unwrap_or("<no content>"),
+                    &channel_id,
+                    author.as_ref(),
+                    is_self)
+        }
+        Event::MessageDelete { ref channel_id, .. } => {
+            display(&state, "[deleted a message]", &channel_id, None, false);
+        }
+        Event::ServerCreate(PossibleServer::Online(ref server)) => {
+            for channel in &server.channels {
+                let _ = get_buffer(state, &channel.id);
+            }
+        }
+        Event::ServerCreate(PossibleServer::Offline(_)) => (),
+        Event::ServerMemberAdd(_, _) => (),
+        Event::ServerMemberUpdate { .. } => (),
+        Event::ServerMemberRemove(_, _) => (),
+        Event::ServerMembersChunk(_, _) => (),
+        Event::ChannelCreate(ref channel) => {
+            get_buffer(state, chan_id(&channel));
+        }
+        Event::ChannelUpdate(ref channel) => {
+            get_buffer(state, chan_id(&channel));
+        }
+        Event::ChannelDelete(ref channel) => {
+            get_buffer(state, chan_id(&channel));
+        }
+        _ => (),
+    }
+    fn chan_id(channel: &Channel) -> &ChannelId {
+        match *channel {
+            Channel::Private(ref ch) => &ch.id,
+            Channel::Public(ref ch) => &ch.id,
         }
     }
 }
@@ -195,14 +266,16 @@ fn process_events(state: &mut ConnectionState) {
 fn get_buffer(state: &ConnectionState, channel_id: &ChannelId) -> Option<Buffer> {
     let (server_name, channel_name, server_id, channel_id) = {
         let channel = try_opt!(state.state.find_channel(channel_id));
-        match channel {
+        let channel = match channel {
             ChannelRef::Private(ch) => {
-                ("discord-pm".into(), ch.recipient.name.clone(), ServerId(0), ch.id)
+                Some(("discord-pm".into(), ch.recipient.name.clone(), ServerId(0), ch.id))
             }
+            ChannelRef::Public(_, ch) if ch.kind != ChannelType::Text => None,
             ChannelRef::Public(srv, ch) => {
-                (srv.name.clone(), format!("#{}", ch.name), srv.id, ch.id)
+                Some((srv.name.clone(), format!("#{}", ch.name), srv.id, ch.id))
             }
-        }
+        };
+        try_opt!(channel)
     };
     let buffer_id = format!("{}.{}", server_id.0, channel_id.0);
     let buffer_name = format!("{} {}", server_name, channel_name);
@@ -224,8 +297,8 @@ fn get_buffer(state: &ConnectionState, channel_id: &ChannelId) -> Option<Buffer>
 fn is_self_mentioned(state: &ConnectionState,
                      channel_id: &ChannelId,
                      mention_everyone: bool,
-                     mentions: Option<Vec<User>>,
-                     roles: Option<Vec<RoleId>>)
+                     mentions: Option<&Vec<User>>,
+                     roles: Option<&Vec<RoleId>>)
                      -> bool {
     if mention_everyone {
         return true;
@@ -304,7 +377,7 @@ fn replace_mentions(state: &State, channel_id: &ChannelId, content: &str) -> Str
 fn display(state: &ConnectionState,
            content: &str,
            channel_id: &ChannelId,
-           author: Option<User>,
+           author: Option<&User>,
            self_mentioned: bool) {
     let buffer = match get_buffer(state, channel_id) {
         Some(buffer) => buffer,
