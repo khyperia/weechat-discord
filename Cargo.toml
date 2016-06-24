@@ -13,7 +13,7 @@ name = "weecord"
 crate-type = ["dylib"]
 
 [dependencies]
-#discord = "^0.5.0"
+lazy_static = "0.2"
 discord = { git = "https://github.com/SpaceManiac/discord-rs.git" }
 regex = "0.1"
 libc = "0.2.0"

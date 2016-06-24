@@ -1,6 +1,8 @@
 extern crate discord;
 extern crate libc;
 extern crate regex;
+#[macro_use]
+extern crate lazy_static;
 
 #[macro_use]
 mod macros;
@@ -14,7 +16,7 @@ use std::error::Error;
 use std::thread::spawn;
 use discord::{Discord, State, ChannelRef};
 use discord::model::{Event, Channel, ChannelType, ChannelId, ServerId, RoleId, User,
-                     PossibleServer, Member};
+                     PossibleServer, Member, PublicChannel, Role, CurrentUser};
 use ffi::{Buffer, MAIN_BUFFER, PokeableFd};
 use regex::Regex;
 
@@ -373,8 +375,16 @@ fn format_mention(name: &str) -> String {
     format!("@{}", name)
 }
 
+fn format_channel(channel: &PublicChannel) -> String {
+    format!("#{}", channel.name)
+}
+
 fn format_mention_user(user: &User) -> String {
     format_mention(&user.name)
+}
+
+fn format_mention_current_user(user: &CurrentUser) -> String {
+    format_mention(&user.username)
 }
 
 fn format_mention_member(member: &Member) -> String {
@@ -385,9 +395,16 @@ fn format_mention_member(member: &Member) -> String {
     }
 }
 
+fn format_role(role: &Role) -> String {
+    format_mention(&role.name)
+}
+
 fn replace_mentions(state: &State, channel_id: &ChannelId, content: &str) -> String {
-    let re = Regex::new(r"<@(?P<id>\d+)>").unwrap();
-    re.replace_all(content, |ref captures: &regex::Captures| {
+    lazy_static! {
+        static ref RE: Regex = Regex::new(r"<(?P<type>@|@!|@&|#)(?P<id>\d+)>").unwrap();
+    }
+    RE.replace_all(content, |ref captures: &regex::Captures| {
+        let ty = captures.name("type").unwrap();
         captures.name("id")
             .and_then(|id| id.parse::<u64>().ok())
             .and_then(|id| {
@@ -395,15 +412,35 @@ fn replace_mentions(state: &State, channel_id: &ChannelId, content: &str) -> Str
                     Some(ChannelRef::Private(ref private)) => {
                         if private.recipient.id.0 == id {
                             Some(format_mention_user(&private.recipient))
+                        } else if state.user().id.0 == id {
+                            Some(format_mention_current_user(&state.user()))
                         } else {
                             None
                         }
                     }
-                    Some(ChannelRef::Public(ref server, _)) => {
+                    Some(ChannelRef::Public(ref server, _)) if ty == "@" => {
                         server.members
                             .iter()
                             .find(|ref member| member.user.id.0 == id)
-                            .map(|ref member| format_mention_member(member))
+                            .map(|ref member| format_mention_user(&member.user))
+                    }
+                    Some(ChannelRef::Public(ref server, _)) if ty == "@!" => {
+                        server.members
+                            .iter()
+                            .find(|ref member| member.user.id.0 == id)
+                            .map(|ref member| format_mention_member(&member))
+                    }
+                    Some(ChannelRef::Public(ref server, _)) if ty == "@&" => {
+                        server.roles
+                            .iter()
+                            .find(|ref role| role.id.0 == id)
+                            .map(|ref role| format_role(&role))
+                    }
+                    Some(ChannelRef::Public(ref server, _)) if ty == "#" => {
+                        server.channels
+                            .iter()
+                            .find(|ref channel| channel.id.0 == id)
+                            .map(|ref channel| format_channel(&channel))
                     }
                     _ => None,
                 }
