@@ -372,7 +372,15 @@ fn is_self_mentioned(state: &ConnectionState,
 }
 
 fn format_mention(name: &str) -> String {
-    format!("@{}", name)
+    let surround = if let Some(color) = ffi::info_get("nick_color", name) {
+        Some((color, "\u{1c}"))
+    } else {
+        None
+    };
+    match surround {
+        Some((l, r)) => format!("{}@{}{}", l, name, r),
+        None => format!("@{}", name)
+    }
 }
 
 fn format_channel(channel: &PublicChannel) -> String {
@@ -464,11 +472,9 @@ fn display(state: &ConnectionState,
         tags.push("notify_highlight".into());
     } else {
         tags.push("notify_message".into());
-
-    }
-    let name = author.map_or("[unknown]".into(), |x| x.name.replace(',', ""));
+    };
+    let name = author.map_or("[unknown]".into(), |x| format_mention_user(x));
     tags.push(format!("nick_{}", name));
-    // nick_color
     buffer.print_tags(&tags.join(",".into()),
                       &format!("{}\t{}",
                                name,

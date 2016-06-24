@@ -230,3 +230,19 @@ pub fn hook_command(cmd: &str, desc: &str, args: &str, argdesc: &str, compl: &st
                          compl.as_ptr());
     }
 }
+
+pub fn info_get(info_name: &str, arguments: &str) -> Option<String> {
+    extern "C" {
+        fn wdc_info_get(info_name: *const c_char, arguments: *const c_char) -> *const c_char;
+    }
+    unsafe {
+        let info_name = CString::new(info_name).unwrap();
+        let arguments = CString::new(arguments).unwrap();
+        let result = wdc_info_get(info_name.as_ptr(), arguments.as_ptr());
+        if result.is_null() {
+            None
+        } else {
+            Some(CStr::from_ptr(result).to_string_lossy().into_owned())
+        }
+    }
+}
