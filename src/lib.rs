@@ -77,17 +77,17 @@ fn set_option(name: &str, value: &str) -> String {
         wdc_config_set_plugin(name_c.as_ptr(), value_c.as_ptr())
     };
     match (result, before) {
-        (0, Some(before)) => format!("Option successfully changed from {} to {}", before, value),
-        (0, None) | (1, None) => format!("Option successfully set to {}", value),
-        (1, Some(before)) => format!("Option already contained {}", before),
-        (2, _) => format!("Option {} not found", name),
+        (0, Some(before)) => format!("option successfully changed from {} to {}", before, value),
+        (0, None) | (1, None) => format!("option successfully set to {}", value),
+        (1, Some(before)) => format!("option already contained {}", before),
+        (2, _) => format!("option {} not found", name),
         (_, Some(before)) => {
-            format!("Error when setting option {} to {} (was {})",
+            format!("error when setting option {} to {} (was {})",
                     name,
                     value,
                     before)
         }
-        (_, None) => format!("Error when setting option {} to {}", name, value),
+        (_, None) => format!("error when setting option {} to {}", name, value),
     }
 }
 
@@ -107,7 +107,7 @@ fn get_option(name: &str) -> Option<String> {
 }
 
 fn user_set_option(name: &str, value: &str) {
-    MAIN_BUFFER.print(&set_option(name, value));
+    command_print(&set_option(name, value));
 }
 
 fn connect() {
@@ -124,18 +124,18 @@ fn connect() {
             return;
         }
     };
-    MAIN_BUFFER.print("Discord: connecting");
+    command_print("connecting");
     let discord = match Discord::new(&email, &password) {
         Ok(discord) => discord,
         Err(err) => {
-            MAIN_BUFFER.print(&format!("Discord: connection error: {}", err.description()));
+            command_print(&format!("connection error: {}", err.description()));
             return;
         }
     };
     let (mut connection, ready) = match discord.connect() {
         Ok(ok) => ok,
         Err(err) => {
-            MAIN_BUFFER.print(&format!("Discord: connection error: {}", err.description()));
+            command_print(&format!("connection error: {}", err.description()));
             return;
         }
     };
@@ -143,7 +143,7 @@ fn connect() {
     let dis_state = State::new(ready);
 
     // TODO: on_ready (open MAIN_BUFFERs, etc)
-    MAIN_BUFFER.print("Discord: connected");
+    command_print("connected");
     let (send, recv) = channel();
     let pipe = PokeableFd::new(Box::new(process_events));
     let pipe_poker = pipe.get_poker();
@@ -171,22 +171,26 @@ fn connect() {
     });
 }
 
+fn command_print(message: &str) {
+    MAIN_BUFFER.print(&format!("{}: {}", &weechat::COMMAND, message));
+}
+
 fn run_command(buffer: Buffer, state: Option<&mut ConnectionState>, command: &str) -> bool {
     let _ = state;
     let _ = buffer;
     if command == "" {
-        MAIN_BUFFER.print("Discord: see /help discord for more information.")
+        command_print("see /help discord for more information")
     } else if command == "connect" {
         connect();
     } else if command == "disconnect" {
-        MAIN_BUFFER.print("Discord: disconnected");
+        command_print("disconnected");
         return false;
     } else if command.starts_with("email ") {
         user_set_option("email", &command["email ".len()..]);
     } else if command.starts_with("password ") {
         user_set_option("password", &command["password ".len()..]);
     } else {
-        MAIN_BUFFER.print("Discord: unknown command");
+        command_print("unknown command");
     }
     true
 }
@@ -213,14 +217,14 @@ fn process_events(state: &mut ConnectionState) {
             Ok(event) => event,
             Err(TryRecvError::Empty) => return,
             Err(TryRecvError::Disconnected) => {
-                MAIN_BUFFER.print("Discord: Listening thread stopped!");
+                command_print("Listening thread stopped!");
                 return;
             }
         };
         let event = match event {
             Ok(event) => event,
             Err(err) => {
-                MAIN_BUFFER.print(&format!("Discord: listening thread had error - {}", err));
+                command_print(&format!("listening thread had error - {}", err));
                 continue;
             }
         };
@@ -316,7 +320,7 @@ fn get_buffer(state: &ConnectionState, channel_id: &ChannelId) -> Option<Buffer>
             }
             ChannelRef::Public(_, ch) if ch.kind != ChannelType::Text => None,
             ChannelRef::Public(srv, ch) => {
-                Some((srv.name.clone(), format!("#{}", ch.name), srv.id, ch.id))
+                Some((srv.name.clone(), format_channel(&ch), srv.id, ch.id))
             }
         };
         try_opt!(channel)
