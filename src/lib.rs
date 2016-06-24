@@ -106,44 +106,44 @@ fn get_option(name: &str) -> Option<String> {
     }
 }
 
-fn user_set_option(buffer: Buffer, name: &str, value: &str) {
-    buffer.print(&set_option(name, value));
+fn user_set_option(name: &str, value: &str) {
+    MAIN_BUFFER.print(&set_option(name, value));
 }
 
-fn connect(buffer: Buffer) {
+fn connect() {
     let (email, password) = match (get_option("email"), get_option("password")) {
         (Some(e), Some(p)) => (e, p),
         (email, password) => {
-            buffer.print("Error: plugins.var.weecord.{email,password} unset. Run:");
+            MAIN_BUFFER.print("Error: plugins.var.weecord.{email,password} unset. Run:");
             if email.is_none() {
-                buffer.print("/discord email your.email@example.com");
+                MAIN_BUFFER.print("/discord email your.email@example.com");
             }
             if password.is_none() {
-                buffer.print("/discord password hunter2");
+                MAIN_BUFFER.print("/discord password hunter2");
             }
             return;
         }
     };
-    buffer.print("Discord: Connecting");
+    MAIN_BUFFER.print("Discord: connecting");
     let discord = match Discord::new(&email, &password) {
         Ok(discord) => discord,
         Err(err) => {
-            buffer.print(&format!("Connection error: {}", err.description()));
+            MAIN_BUFFER.print(&format!("Discord: connection error: {}", err.description()));
             return;
         }
     };
     let (mut connection, ready) = match discord.connect() {
         Ok(ok) => ok,
         Err(err) => {
-            buffer.print(&format!("Connection error: {}", err.description()));
+            MAIN_BUFFER.print(&format!("Discord: connection error: {}", err.description()));
             return;
         }
     };
     let ready_clone = ready.clone();
     let dis_state = State::new(ready);
 
-    // TODO: on_ready (open buffers, etc)
-    buffer.print("Discord: Connected");
+    // TODO: on_ready (open MAIN_BUFFERs, etc)
+    MAIN_BUFFER.print("Discord: connected");
     let (send, recv) = channel();
     let pipe = PokeableFd::new(Box::new(process_events));
     let pipe_poker = pipe.get_poker();
@@ -173,16 +173,20 @@ fn connect(buffer: Buffer) {
 
 fn run_command(buffer: Buffer, state: Option<&mut ConnectionState>, command: &str) -> bool {
     let _ = state;
-    if command == "connect" {
-        connect(buffer);
+    let _ = buffer;
+    if command == "" {
+        MAIN_BUFFER.print("Discord: see /help discord for more information.")
+    } else if command == "connect" {
+        connect();
     } else if command == "disconnect" {
+        MAIN_BUFFER.print("Discord: disconnected");
         return false;
     } else if command.starts_with("email ") {
-        user_set_option(buffer, "email", &command["email ".len()..]);
+        user_set_option("email", &command["email ".len()..]);
     } else if command.starts_with("password ") {
-        user_set_option(buffer, "password", &command["password ".len()..]);
+        user_set_option("password", &command["password ".len()..]);
     } else {
-        buffer.print("Discord: unknown command");
+        MAIN_BUFFER.print("Discord: unknown command");
     }
     true
 }
