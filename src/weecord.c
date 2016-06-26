@@ -4,8 +4,8 @@
 
 void wdr_init(void);
 void wdr_end(void);
-void wdr_command(const void*, const char*);
-void wdr_input(const void*, const char*, const char*);
+void wdr_command(void*, const char*);
+void wdr_input(void*, const char*, const char*);
 void wdr_hook_fd_callback(const void*, int);
 
 WEECHAT_PLUGIN_NAME("weecord");
@@ -176,4 +176,40 @@ const char*
 wdc_info_get(const char* info_name, const char* arguments)
 {
   return weechat_info_get(info_name, arguments);
+}
+
+void*
+wdc_hdata_get(const char* name)
+{
+  return weechat_hdata_get(name);
+}
+
+const void*
+wdc_hdata_get_var_hdata(void* hdata, const char* name)
+{
+  return weechat_hdata_get_var_hdata(hdata, name);
+}
+
+const char*
+wdc_hdata_get_var_type_string(void* hdata, const char* name)
+{
+  return weechat_hdata_get_var_type_string(hdata, name);
+}
+
+int
+wdc_hdata_integer(void* hdata, void* data, const char* name)
+{
+  return weechat_hdata_integer(hdata, data, name);
+}
+
+void*
+wdc_hdata_pointer(void* hdata, void* obj, const char* name)
+{
+  return weechat_hdata_pointer(hdata, obj, name);
+}
+
+const char*
+wdc_hdata_string(void* hdata, void* data, const char* name)
+{
+  return weechat_hdata_string(hdata, data, name);
 }

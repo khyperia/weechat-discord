@@ -17,10 +17,10 @@ use std::error::Error;
 use std::iter::IntoIterator;
 use std::thread::spawn;
 use discord::{Discord, State, ChannelRef};
-use discord::model::{Event, Channel, ChannelType, ChannelId, ServerId, RoleId,
-                     User, PossibleServer};
-use ffi::{Buffer, MAIN_BUFFER, PokeableFd};
-use types::{Mention,DiscordId};
+use discord::model::{Event, Channel, ChannelType, ChannelId, ServerId, RoleId, MessageId, User,
+                     PossibleServer};
+use ffi::{Buffer, MAIN_BUFFER, PokeableFd, WeechatObject};
+use types::{Mention, DiscordId};
 use regex::Regex;
 
 mod weechat {
@@ -75,8 +75,8 @@ fn set_option(name: &str, value: &str) -> String {
     }
     let before = get_option(name);
     let result = unsafe {
-        let name_c = CString::new(name).unwrap();
-        let value_c = CString::new(value).unwrap();
+        let name_c = unwrap1!(CString::new(name));
+        let value_c = unwrap1!(CString::new(value));
         wdc_config_set_plugin(name_c.as_ptr(), value_c.as_ptr())
     };
     match (result, before) {
@@ -99,12 +99,12 @@ fn get_option(name: &str) -> Option<String> {
         fn wdc_config_get_plugin(name: *const c_char) -> *const c_char;
     }
     unsafe {
-        let name_c = CString::new(name).unwrap();
+        let name_c = unwrap1!(CString::new(name));
         let result = wdc_config_get_plugin(name_c.as_ptr());
         if result.is_null() {
             None
         } else {
-            Some(CStr::from_ptr(result).to_str().unwrap().into())
+            Some(unwrap1!(CStr::from_ptr(result).to_str()).into())
         }
     }
 }
@@ -259,12 +259,15 @@ fn process_event(state: &ConnectionState, event: &Event) {
                                             Some(&message.mentions),
                                             Some(&message.mention_roles));
             display(&state,
-                    &message.content,
                     &message.channel_id,
+                    &message.id,
                     Some(&message.author),
+                    Some(&message.content),
+                    "",
                     is_self)
         }
-        Event::MessageUpdate { ref channel_id,
+        Event::MessageUpdate { ref id,
+                               ref channel_id,
                                ref content,
                                ref author,
                                ref mention_everyone,
@@ -277,13 +280,21 @@ fn process_event(state: &ConnectionState, event: &Event) {
                                             mentions.as_ref(),
                                             mention_roles.as_ref());
             display(&state,
-                    content.as_ref().map(|x| &**x).unwrap_or("<no content>"),
                     &channel_id,
+                    &id,
                     author.as_ref(),
+                    content.as_ref().map(|x| &**x),
+                    "EDIT: ",
                     is_self)
         }
-        Event::MessageDelete { ref channel_id, .. } => {
-            display(&state, "[deleted a message]", &channel_id, None, false);
+        Event::MessageDelete { ref message_id, ref channel_id } => {
+            display(&state,
+                    &channel_id,
+                    &message_id,
+                    None,
+                    None,
+                    "DELETE: ",
+                    false);
         }
         Event::ServerCreate(PossibleServer::Online(ref server)) => {
             for channel in &server.channels {
@@ -322,9 +333,7 @@ fn get_buffer(state: &ConnectionState, channel_id: &ChannelId) -> Option<Buffer>
                 Some(("discord-pm".into(), ch.recipient.name.clone(), ServerId(0), ch.id))
             }
             ChannelRef::Public(_, ch) if ch.kind != ChannelType::Text => None,
-            ChannelRef::Public(srv, ch) => {
-                Some((srv.name.clone(), ch.mention(), srv.id, ch.id))
-            }
+            ChannelRef::Public(srv, ch) => Some((srv.name.clone(), ch.mention(), srv.id, ch.id)),
         };
         try_opt!(channel)
     };
@@ -390,13 +399,16 @@ fn format_mention(name: &str) -> String {
     };
     match surround {
         Some((l, r)) => format!("{}@{}{}", l, name, r),
-        None => format!("@{}", name)
+        None => format!("@{}", name),
     }
 }
 
-fn find_mention<'a, T: 'a + Mention + DiscordId, I: Iterator<Item=&'a T>>(mentionables: I, id: u64) -> Option<String> {
-    mentionables.into_iter().find(|ref mention| mention.id() == id)
-                            .map(|ref mention| mention.mention())
+fn find_mention<'a, T: 'a + Mention + DiscordId, I: Iterator<Item = &'a T>>(mentionables: I,
+                                                                            id: u64)
+                                                                            -> Option<String> {
+    mentionables.into_iter()
+        .find(|ref mention| mention.id() == id)
+        .map(|ref mention| mention.mention())
 }
 
 fn replace_mentions(state: &State, channel_id: &ChannelId, content: &str) -> String {
@@ -404,7 +416,7 @@ fn replace_mentions(state: &State, channel_id: &ChannelId, content: &str) -> Str
         static ref RE: Regex = Regex::new(r"<(?P<type>@|@!|@&|#)(?P<id>\d+)>").unwrap();
     }
     RE.replace_all(content, |ref captures: &regex::Captures| {
-        let x = captures.name("type").unwrap();
+        let x = unwrap!(captures.name("type"));
         captures.name("id")
             .and_then(|id| id.parse::<u64>().ok())
             .and_then(|id| {
@@ -417,14 +429,14 @@ fn replace_mentions(state: &State, channel_id: &ChannelId, content: &str) -> Str
                         } else {
                             None
                         }
-                    },
+                    }
                     Some(ChannelRef::Public(ref server, _)) => {
                         match x {
                             "@" => find_mention(server.members.iter().map(|x| &x.user), id),
                             "@!" => find_mention(server.members.iter(), id),
                             "@&" => find_mention(server.roles.iter(), id),
                             "#" => find_mention(server.channels.iter(), id),
-                            _ => None
+                            _ => None,
                         }
                     }
                     _ => None,
@@ -434,26 +446,77 @@ fn replace_mentions(state: &State, channel_id: &ChannelId, content: &str) -> Str
     })
 }
 
+// returns: (Prefix, Message)
+fn find_old_msg(buffer: &Buffer, message_id: &MessageId) -> Option<(String, String)> {
+    let searchterm = format!("discord_messageid_{}", message_id.0);
+    let mut line = unwrap!(unwrap!(buffer.get_any("lines")).get_any("last_line"));
+    for _ in 0..100 {
+        let data = unwrap!(line.get_any("data"));
+        let tagcount: i32 = unwrap!(data.get("tags_count"));
+        let tagcount = tagcount as usize;
+        for i in 0..tagcount {
+            let tag: String = unwrap!(data.get_idx::<ffi::SharedString>("tags_array", i)).0;
+            if tag == searchterm {
+                let prefix = unwrap!(data.get::<ffi::SharedString>("prefix")).0;
+                let message = unwrap!(data.get("message"));
+                return Some((prefix, message));
+            }
+        }
+        if let Some(prev) = line.get_any("prev_line") {
+            if line == prev {
+                MAIN_BUFFER.print("line == prev");
+                break;
+            }
+            line = prev;
+            MAIN_BUFFER.print(&format!("line: {:?}", line.ptr()));
+        } else {
+            break;
+        }
+    }
+    None
+}
+
 fn display(state: &ConnectionState,
-           content: &str,
            channel_id: &ChannelId,
+           message_id: &MessageId,
            author: Option<&User>,
+           content: Option<&str>,
+           prefix: &'static str,
            self_mentioned: bool) {
     let buffer = match get_buffer(state, channel_id) {
         Some(buffer) => buffer,
         None => return,
     };
-
+    let (author, content) = match (author, content) {
+        (Some(author), Some(content)) => (author.name.clone(), content.into()),
+        (Some(author), None) => {
+            match find_old_msg(&buffer, &message_id) {
+                Some((_, content)) => (author.name.clone(), content),
+                None => (author.name.clone(), "<no content>".into()),
+            }
+        }
+        (None, Some(content)) => {
+            match find_old_msg(&buffer, &message_id) {
+                Some((author, _)) => (author, content.into()),
+                None => ("[unknown]".into(), content.into()),
+            }
+        }
+        (None, None) => {
+            match find_old_msg(&buffer, &message_id) {
+                Some(tup) => tup,
+                None => return, // don't bother, we have absolutely nothing
+            }
+        }
+    };
     let mut tags = Vec::new();
     if self_mentioned {
         tags.push("notify_highlight".into());
     } else {
         tags.push("notify_message".into());
     };
-    let name = author.map_or("[unknown]".into(), |x| x.name.clone());
-    tags.push(format!("nick_{}", name));
+    let content = replace_mentions(&state.state, channel_id, &content);
+    tags.push(format!("nick_{}", author));
+    tags.push(format!("discord_messageid_{}", message_id.0));
     buffer.print_tags(&tags.join(",".into()),
-                      &format!("{}\t{}",
-                               name,
-                               replace_mentions(&state.state, channel_id, content)));
+                      &format!("{}\t{}{}", author, prefix, content));
 }

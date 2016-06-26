@@ -1,6 +1,5 @@
 use discord::ChannelRef;
-use discord::model::{User, Member, PrivateChannel, PublicChannel, Role,
-                     CurrentUser};
+use discord::model::{User, Member, PrivateChannel, PublicChannel, Role, CurrentUser};
 use ::format_mention;
 
 pub trait Mention {
@@ -33,7 +32,7 @@ impl<'a> Mention for ChannelRef<'a> {
     fn mention(&self) -> String {
         match *self {
             ChannelRef::Public(_, ref chan) => chan.mention(),
-            ChannelRef::Private(ref chan) => chan.mention()
+            ChannelRef::Private(ref chan) => chan.mention(),
         }
     }
 }
@@ -87,10 +86,10 @@ impl DiscordId for Role {
 }
 
 impl<'a> DiscordId for ChannelRef<'a> {
-    fn id(&self) ->Id {
+    fn id(&self) -> Id {
         match *self {
             ChannelRef::Public(_, ref chan) => chan.id(),
-            ChannelRef::Private(ref chan) => chan.id()
+            ChannelRef::Private(ref chan) => chan.id(),
         }
     }
 }

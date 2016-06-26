@@ -1,14 +1,129 @@
 use libc::{c_void, c_char, c_int, pipe2, O_NONBLOCK, read, write, close};
 use std::ffi::{CString, CStr};
-use std::mem::forget;
+use std::panic::{UnwindSafe, catch_unwind};
 use discord::model::ChannelId;
 use {ConnectionState, run_command, input};
 
 pub struct Buffer {
-    ptr: *const c_void,
+    ptr: *mut c_void,
 }
 
-pub const MAIN_BUFFER: Buffer = Buffer { ptr: 0 as *const c_void };
+pub const MAIN_BUFFER: Buffer = Buffer { ptr: 0 as *mut c_void };
+
+pub struct WeechatAny {
+    data: *mut c_void,
+    hdata: *mut c_void,
+}
+
+impl PartialEq for WeechatAny {
+    fn eq(&self, rhs: &Self) -> bool {
+        self.ptr() == rhs.ptr()
+    }
+}
+
+
+pub struct SharedString(pub String);
+
+fn strip_indexer_field(field: &str) -> &str {
+    if let Some(idx) = field.find('|') {
+        &field[(idx + 1)..]
+    } else {
+        field
+    }
+}
+
+pub trait WeechatObject {
+    fn from_ptr_hdata(ptr: *mut c_void, hdata: *mut c_void) -> Self;
+    fn ptr(&self) -> *mut c_void;
+    fn hdata(&self) -> *mut c_void;
+
+    fn get<T: HDataGetResult>(&self, field: &str) -> Option<T> {
+        let field_type = T::weechat_type();
+        if field_type != "" {
+            let actual_type = hdata_get_var_type_string(self.hdata(), field);
+            if field_type != actual_type {
+                really_bad(format!("Field {} had type {} but we expected {}",
+                                   field,
+                                   actual_type,
+                                   field_type));
+            }
+        }
+        T::new::<Self>(&self, &field)
+    }
+
+    fn get_idx<T: HDataGetResult>(&self, field: &str, index: usize) -> Option<T> {
+        self.get(&format!("{}|{}", index, field))
+    }
+
+    fn get_any(&self, field: &str) -> Option<WeechatAny> {
+        self.get(field)
+    }
+}
+
+impl WeechatObject for WeechatAny {
+    fn from_ptr_hdata(data: *mut c_void, hdata: *mut c_void) -> Self {
+        WeechatAny {
+            data: data,
+            hdata: hdata,
+        }
+    }
+
+    fn ptr(&self) -> *mut c_void {
+        self.data
+    }
+
+    fn hdata(&self) -> *mut c_void {
+        self.hdata
+    }
+}
+
+pub trait HDataGetResult: Sized {
+    fn new<T: WeechatObject + ?Sized>(parent: &T, field: &str) -> Option<Self>;
+    fn weechat_type() -> &'static str;
+}
+
+impl<T: WeechatObject> HDataGetResult for T {
+    fn new<P: WeechatObject + ?Sized>(parent: &P, field: &str) -> Option<Self> {
+        let data = try_opt!(hdata_pointer(parent.hdata(), parent.ptr(), field));
+        let hdata_name = hdata_get_var_hdata(parent.hdata(), field);
+        let hdata = hdata_get(&hdata_name);
+        Some(Self::from_ptr_hdata(data, hdata))
+    }
+
+    fn weechat_type() -> &'static str {
+        "pointer"
+    }
+}
+
+impl HDataGetResult for String {
+    fn new<P: WeechatObject + ?Sized>(parent: &P, field: &str) -> Option<Self> {
+        hdata_string(parent.hdata(), parent.ptr(), field)
+    }
+
+    fn weechat_type() -> &'static str {
+        "string"
+    }
+}
+
+impl HDataGetResult for SharedString {
+    fn new<P: WeechatObject + ?Sized>(parent: &P, field: &str) -> Option<Self> {
+        hdata_string(parent.hdata(), parent.ptr(), field).map(SharedString)
+    }
+
+    fn weechat_type() -> &'static str {
+        "shared_string"
+    }
+}
+
+impl HDataGetResult for i32 {
+    fn new<P: WeechatObject + ?Sized>(parent: &P, field: &str) -> Option<Self> {
+        hdata_integer(parent.hdata(), parent.ptr(), field).map(|x| x as i32)
+    }
+
+    fn weechat_type() -> &'static str {
+        "integer"
+    }
+}
 
 static mut global_state: *mut ConnectionState = 0 as *mut ConnectionState;
 
@@ -32,15 +147,20 @@ fn drop_global_state() {
     };
 }
 
+pub fn really_bad(message: String) -> ! {
+    MAIN_BUFFER.print(&format!("{}: Internal error - {}", ::weechat::COMMAND, message));
+    panic!(message); // hopefully we hit a catch_unwind
+}
+
 impl Buffer {
     pub fn new(name: &str, channel: &ChannelId) -> Option<Buffer> {
         extern "C" {
-            fn wdc_buffer_new(name: *const c_char, data: *const c_char) -> *const c_void;
+            fn wdc_buffer_new(name: *const c_char, data: *const c_char) -> *mut c_void;
         }
         unsafe {
-            let name = CString::new(name).unwrap();
+            let name = unwrap1!(CString::new(name));
             let id = format!("{}", channel.0);
-            let id = CString::new(id).unwrap();
+            let id = unwrap1!(CString::new(id));
             let result = wdc_buffer_new(name.as_ptr(), id.as_ptr());
             if result.is_null() {
                 None
@@ -52,10 +172,10 @@ impl Buffer {
 
     pub fn search(name: &str) -> Option<Buffer> {
         extern "C" {
-            fn wdc_buffer_search(name: *const c_char) -> *const c_void;
+            fn wdc_buffer_search(name: *const c_char) -> *mut c_void;
         }
         unsafe {
-            let name_c = CString::new(name).unwrap();
+            let name_c = unwrap1!(CString::new(name));
             let result = wdc_buffer_search(name_c.as_ptr());
             if result.is_null() {
                 None
@@ -67,21 +187,21 @@ impl Buffer {
 
     pub fn print(&self, message: &str) {
         extern "C" {
-            fn wdc_print(buffer: *const c_void, message: *const c_char);
+            fn wdc_print(buffer: *mut c_void, message: *const c_char);
         }
         unsafe {
-            let msg = CString::new(message).unwrap();
+            let msg = unwrap1!(CString::new(message));
             wdc_print(self.ptr, msg.as_ptr());
         }
     }
 
     pub fn print_tags(&self, tags: &str, message: &str) {
         extern "C" {
-            fn wdc_print_tags(buffer: *const c_void, tags: *const c_char, message: *const c_char);
+            fn wdc_print_tags(buffer: *mut c_void, tags: *const c_char, message: *const c_char);
         }
         unsafe {
-            let msg = CString::new(message).unwrap();
-            let tags = CString::new(tags).unwrap();
+            let msg = unwrap1!(CString::new(message));
+            let tags = unwrap1!(CString::new(tags));
             wdc_print_tags(self.ptr, tags.as_ptr(), msg.as_ptr());
         }
     }
@@ -97,15 +217,31 @@ impl Buffer {
 
     pub fn set(&self, property: &str, value: &str) {
         extern "C" {
-            fn wdc_buffer_set(buffer: *const c_void,
-                              property: *const c_char,
-                              value: *const c_char);
+            fn wdc_buffer_set(buffer: *mut c_void, property: *const c_char, value: *const c_char);
         }
         unsafe {
-            let property = CString::new(property).unwrap();
-            let value = CString::new(value).unwrap();
+            let property = unwrap1!(CString::new(property));
+            let value = unwrap1!(CString::new(value));
             wdc_buffer_set(self.ptr, property.as_ptr(), value.as_ptr());
         }
+    }
+}
+
+impl WeechatObject for Buffer {
+    fn from_ptr_hdata(ptr: *mut c_void, hdata: *mut c_void) -> Self {
+        let result = Buffer { ptr: ptr };
+        if hdata != result.hdata() {
+            really_bad("Buffer hdata pointer was different!".into());
+        };
+        result
+    }
+
+    fn ptr(&self) -> *mut c_void {
+        self.ptr
+    }
+
+    fn hdata(&self) -> *mut c_void {
+        hdata_get("buffer")
     }
 }
 
@@ -164,49 +300,70 @@ impl Drop for PokeableFd {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn wdr_end() {
-    drop_global_state();
-}
-
-#[no_mangle]
-pub extern "C" fn wdr_init() {
-    ::init();
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wdr_input(buffer: *const c_void,
-                                   channel_id: *const c_char,
-                                   input_str: *const c_char) {
-    let buffer = Buffer { ptr: buffer };
-    let channel_id = ChannelId(CStr::from_ptr(channel_id).to_str().unwrap().parse().unwrap());
-    let input_str = CStr::from_ptr(input_str).to_str().unwrap();
-    let state = get_global_state();
-    input(state, buffer, &channel_id, input_str);
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wdr_command(buffer_c: *const c_void, command_c: *const c_char) {
-    let buffer = Buffer { ptr: buffer_c };
-    let state = get_global_state();
-    let command = CStr::from_ptr(command_c).to_str().unwrap();
-    if run_command(buffer, state, command) == false {
-        drop_global_state();
+fn wrap_panic<F: FnOnce() -> () + UnwindSafe>(f: F) -> () {
+    let result = catch_unwind(|| f());
+    match result {
+        Ok(()) => (),
+        Err(err) => {
+            let msg = match err.downcast_ref::<String>() {
+                Some(msg) => msg,
+                None => "unknown error",
+            };
+            let result = catch_unwind(|| {
+                MAIN_BUFFER.print(&format!("{}: Fatal error (caught) - {}", ::weechat::COMMAND, msg))
+            });
+            let _ = result; // eat error without logging :(
+        }
     }
 }
 
 #[no_mangle]
-pub extern "C" fn wdr_hook_fd_callback(callback: *const c_void, fd: c_int) {
-    let func = unsafe {
-        let mut tmp = 0 as c_char;
-        while read(fd, (&mut tmp) as *mut c_char as *mut c_void, 1) == 1 {
-            // MAIN_BUFFER.print("Unpoke!");
+pub extern "C" fn wdr_end() {
+    wrap_panic(|| drop_global_state());
+}
+
+#[no_mangle]
+pub extern "C" fn wdr_init() {
+    wrap_panic(|| ::init());
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn wdr_input(buffer: *mut c_void,
+                                   channel_id: *const c_char,
+                                   input_str: *const c_char) {
+    wrap_panic(|| {
+        let buffer = Buffer { ptr: buffer };
+        let channel_id = ChannelId(unwrap1!(unwrap1!(CStr::from_ptr(channel_id).to_str()).parse()));
+        let input_str = unwrap1!(CStr::from_ptr(input_str).to_str());
+        let state = get_global_state();
+        input(state, buffer, &channel_id, input_str);
+    });
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn wdr_command(buffer_c: *mut c_void, command_c: *const c_char) {
+    wrap_panic(|| {
+        let buffer = Buffer { ptr: buffer_c };
+        let state = get_global_state();
+        let command = unwrap1!(CStr::from_ptr(command_c).to_str());
+        if run_command(buffer, state, command) == false {
+            drop_global_state();
         }
-        Box::from_raw(callback as *mut fn(&'static mut ConnectionState))
-    };
-    let state = get_global_state().unwrap();
-    func(state);
-    forget(func);
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn wdr_hook_fd_callback(callback: *const c_void, fd: c_int) {
+    wrap_panic(|| {
+        let func = unsafe {
+            let mut tmp = 0 as c_char;
+            while read(fd, (&mut tmp) as *mut c_char as *mut c_void, 1) == 1 {
+            }
+            &*(callback as *const fn(&'static mut ConnectionState))
+        };
+        let state = unwrap!(get_global_state());
+        func(state);
+    });
 }
 
 pub fn hook_command(cmd: &str, desc: &str, args: &str, argdesc: &str, compl: &str) {
@@ -218,11 +375,11 @@ pub fn hook_command(cmd: &str, desc: &str, args: &str, argdesc: &str, compl: &st
                             completion: *const c_char);
     }
     unsafe {
-        let cmd = CString::new(cmd).unwrap();
-        let desc = CString::new(desc).unwrap();
-        let args = CString::new(args).unwrap();
-        let argdesc = CString::new(argdesc).unwrap();
-        let compl = CString::new(compl).unwrap();
+        let cmd = unwrap1!(CString::new(cmd));
+        let desc = unwrap1!(CString::new(desc));
+        let args = unwrap1!(CString::new(args));
+        let argdesc = unwrap1!(CString::new(argdesc));
+        let compl = unwrap1!(CString::new(compl));
         wdc_hook_command(cmd.as_ptr(),
                          desc.as_ptr(),
                          args.as_ptr(),
@@ -236,9 +393,99 @@ pub fn info_get(info_name: &str, arguments: &str) -> Option<String> {
         fn wdc_info_get(info_name: *const c_char, arguments: *const c_char) -> *const c_char;
     }
     unsafe {
-        let info_name = CString::new(info_name).unwrap();
-        let arguments = CString::new(arguments).unwrap();
+        let info_name = unwrap1!(CString::new(info_name));
+        let arguments = unwrap1!(CString::new(arguments));
         let result = wdc_info_get(info_name.as_ptr(), arguments.as_ptr());
+        if result.is_null() {
+            None
+        } else {
+            Some(CStr::from_ptr(result).to_string_lossy().into_owned())
+        }
+    }
+}
+
+fn hdata_get(name: &str) -> *mut c_void {
+    extern "C" {
+        fn wdc_hdata_get(name: *const c_char) -> *mut c_void;
+    }
+    unsafe {
+        let name_c = unwrap1!(CString::new(name));
+        let data = wdc_hdata_get(name_c.as_ptr());
+        if data.is_null() {
+            really_bad(format!("hdata name {} was invalid", name));
+        }
+        data
+    }
+}
+
+fn hdata_pointer(hdata: *mut c_void, obj: *mut c_void, name: &str) -> Option<*mut c_void> {
+    extern "C" {
+        fn wdc_hdata_pointer(hdata: *mut c_void,
+                             obj: *mut c_void,
+                             name: *const c_char)
+                             -> *mut c_void;
+    }
+    unsafe {
+        let name = unwrap1!(CString::new(name));
+        let result = wdc_hdata_pointer(hdata, obj, name.as_ptr());
+        if result.is_null() {
+            None
+        } else {
+            Some(result)
+        }
+    }
+}
+
+fn hdata_get_var_hdata(hdata: *mut c_void, name: &str) -> String {
+    extern "C" {
+        fn wdc_hdata_get_var_hdata(hdata: *mut c_void, name: *const c_char) -> *const c_char;
+    }
+    let name = strip_indexer_field(name);
+    unsafe {
+        let name_c = unwrap1!(CString::new(name));
+        let result = wdc_hdata_get_var_hdata(hdata, name_c.as_ptr());
+        if result.is_null() {
+            really_bad(format!("hdata field {} hdata was invalid", name));
+        }
+        CStr::from_ptr(result).to_string_lossy().into_owned()
+    }
+}
+
+fn hdata_get_var_type_string(hdata: *mut c_void, name: &str) -> String {
+    extern "C" {
+        fn wdc_hdata_get_var_type_string(hdata: *mut c_void, name: *const c_char) -> *const c_char;
+    }
+    let name = strip_indexer_field(name);
+    unsafe {
+        let name_c = unwrap1!(CString::new(name));
+        let result = wdc_hdata_get_var_type_string(hdata, name_c.as_ptr());
+        if result.is_null() {
+            really_bad(format!("hdata field {} type was invalid", name));
+        }
+        CStr::from_ptr(result).to_string_lossy().into_owned()
+    }
+}
+
+fn hdata_integer(hdata: *mut c_void, data: *mut c_void, name: &str) -> Option<c_int> {
+    extern "C" {
+        fn wdc_hdata_integer(hdata: *mut c_void, data: *mut c_void, name: *const c_char) -> c_int;
+    }
+    unsafe {
+        let name = unwrap1!(CString::new(name));
+        Some(wdc_hdata_integer(hdata, data, name.as_ptr()))
+    }
+}
+
+fn hdata_string(hdata: *mut c_void, data: *mut c_void, name: &str) -> Option<String> {
+    extern "C" {
+        fn wdc_hdata_string(hdata: *mut c_void,
+                            data: *mut c_void,
+                            name: *const c_char)
+                            -> *const c_char;
+    }
+    unsafe {
+        let name = unwrap1!(CString::new(name));
+        let result = wdc_hdata_string(hdata, data, name.as_ptr());
         if result.is_null() {
             None
         } else {
