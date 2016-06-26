@@ -225,6 +225,28 @@ impl Buffer {
             wdc_buffer_set(self.ptr, property.as_ptr(), value.as_ptr());
         }
     }
+
+    pub fn add_nick(&self, nick: &str) {
+        extern "C" {
+            fn wdc_nicklist_add_nick(buffer: *const c_void,
+                                     nick: *const c_char);
+        }
+        unsafe {
+            let nick = CString::new(nick).unwrap();
+            wdc_nicklist_add_nick(self.ptr, nick.as_ptr());
+        }
+    }
+
+    pub fn remove_nick(&self, nick: &str) {
+        extern "C" {
+            fn wdc_nicklist_remove_nick(buffer: *const c_void,
+                                        nick: *const c_char);
+        }
+        unsafe {
+            let nick = CString::new(nick).unwrap();
+            wdc_nicklist_remove_nick(self.ptr, nick.as_ptr());
+        }
+    }
 }
 
 impl WeechatObject for Buffer {

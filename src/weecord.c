@@ -162,14 +162,15 @@ wdc_unhook(struct t_hook* hook)
 void
 wdc_nicklist_add_nick(struct t_gui_buffer* buffer, const char* nick)
 {
-  struct t_gui_nick_group* grp =
-    weechat_nicklist_search_group(buffer, NULL, "root_group");
-  if (!grp) {
-    grp = weechat_nicklist_add_group(buffer, NULL, "root_group",
-                                     "weechat.color.nicklist_group", 1);
-  }
   const char* color = weechat_info_get("nick_color", nick);
-  (void)weechat_nicklist_add_nick(buffer, grp, nick, color, "", "", 1);
+  (void)weechat_nicklist_add_nick(buffer, NULL, nick, color, "", "", 1);
+}
+
+void
+wdc_nicklist_remove_nick(struct t_gui_buffer* buffer, const char* nick) {
+  struct t_gui_nick* gnick = weechat_nicklist_search_nick(buffer, NULL, nick);
+  if (gnick)
+    weechat_nicklist_remove_nick(buffer, gnick);
 }
 
 const char*

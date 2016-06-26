@@ -8,6 +8,7 @@ extern crate lazy_static;
 mod macros;
 pub mod ffi;
 mod types;
+mod util;
 
 use libc::{c_char, c_int};
 use std::ffi::{CString, CStr};
@@ -17,10 +18,11 @@ use std::error::Error;
 use std::iter::IntoIterator;
 use std::thread::spawn;
 use discord::{Discord, State, ChannelRef};
-use discord::model::{Event, Channel, ChannelType, ChannelId, ServerId, RoleId, MessageId, User,
-                     PossibleServer};
+use discord::model::{Event, Channel, ChannelType, ChannelId, ServerId, RoleId,
+                     User, PossibleServer, OnlineStatus};
 use ffi::{Buffer, MAIN_BUFFER, PokeableFd, WeechatObject};
-use types::{Mention, DiscordId};
+use types::{Mention,DiscordId};
+use util::{ServerExt};
 use regex::Regex;
 
 mod weechat {
@@ -249,7 +251,17 @@ fn process_event(state: &ConnectionState, event: &Event) {
                     PossibleServer::Offline(_) => continue,
                 };
                 for channel in &server.channels {
-                    let _ = get_buffer(state, &channel.id);
+                    let buffer = get_buffer(state, &channel.id);
+                    if let Some(buffer) = buffer {
+                        for member in &server.members {
+                            if let Some(presence) = server.find_presence(member.user.id) {
+                                if presence.status == OnlineStatus::Online ||
+                                    presence.status == OnlineStatus::Idle {
+                                    buffer.add_nick(&member.user.name);
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -318,6 +330,24 @@ fn process_event(state: &ConnectionState, event: &Event) {
         }
         Event::ChannelDelete(ref channel) => {
             get_buffer(state, chan_id(&channel));
+        }
+        Event::PresenceUpdate{ ref presence,
+                               .. } => {
+            for ref server in state.state.servers() {
+                if let Some(user) = server.find_user(presence.user_id) {
+                    for channel in &server.channels {
+                        let buffer = get_buffer(state, &channel.id);
+                        if let Some(buffer) = buffer {
+                            if presence.status == OnlineStatus::Online ||
+                                presence.status == OnlineStatus::Idle {
+                                buffer.add_nick(&user.name);
+                            } else {
+                                buffer.remove_nick(&user.name);
+                            }
+                        }
+                    }
+                }
+            }
         }
         _ => (),
     }
@@ -580,6 +610,7 @@ fn display(state: &ConnectionState,
     let content = replace_mentions(&state.state, channel_id, &content);
     tags.push(format!("nick_{}", author));
     tags.push(format!("discord_messageid_{}", message_id.0));
+    let name = author.map_or("[unknown]".into(), |x| x.name.clone());
     buffer.print_tags(&tags.join(",".into()),
                       &format!("{}\t{}{}", author, prefix, content));
 }
