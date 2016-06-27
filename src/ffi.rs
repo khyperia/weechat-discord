@@ -1,4 +1,6 @@
-use libc::{c_void, c_char, c_int, pipe2, O_NONBLOCK, read, write, close};
+extern crate libc;
+
+use self::libc::{c_void, c_char, c_int, pipe2, O_NONBLOCK, read, write, close};
 use std::ffi::{CString, CStr};
 use std::panic::{UnwindSafe, catch_unwind};
 use discord::model::ChannelId;
@@ -514,5 +516,45 @@ fn hdata_string(hdata: *mut c_void, data: *mut c_void, name: &str) -> Option<Str
         } else {
             Some(CStr::from_ptr(result).to_string_lossy().into_owned())
         }
+    }
+}
+
+pub fn get_option(name: &str) -> Option<String> {
+    extern "C" {
+        fn wdc_config_get_plugin(name: *const c_char) -> *const c_char;
+    }
+    unsafe {
+        let name_c = unwrap1!(CString::new(name));
+        let result = wdc_config_get_plugin(name_c.as_ptr());
+        if result.is_null() {
+            None
+        } else {
+            Some(unwrap1!(CStr::from_ptr(result).to_str()).into())
+        }
+    }
+}
+
+pub fn set_option(name: &str, value: &str) -> String {
+    extern "C" {
+        fn wdc_config_set_plugin(name: *const c_char, value: *const c_char) -> c_int;
+    }
+    let before = get_option(name);
+    let result = unsafe {
+        let name_c = unwrap1!(CString::new(name));
+        let value_c = unwrap1!(CString::new(value));
+        wdc_config_set_plugin(name_c.as_ptr(), value_c.as_ptr())
+    };
+    match (result, before) {
+        (0, Some(before)) => format!("option successfully changed from {} to {}", before, value),
+        (0, None) | (1, None) => format!("option successfully set to {}", value),
+        (1, Some(before)) => format!("option already contained {}", before),
+        (2, _) => format!("option {} not found", name),
+        (_, Some(before)) => {
+            format!("error when setting option {} to {} (was {})",
+                    name,
+                    value,
+                    before)
+        }
+        (_, None) => format!("error when setting option {} to {}", name, value),
     }
 }

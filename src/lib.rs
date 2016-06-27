@@ -1,5 +1,4 @@
 extern crate discord;
-extern crate libc;
 extern crate regex;
 #[macro_use]
 extern crate lazy_static;
@@ -10,8 +9,6 @@ pub mod ffi;
 mod types;
 mod util;
 
-use libc::{c_char, c_int};
-use std::ffi::{CString, CStr};
 use std::mem::drop;
 use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::error::Error;
@@ -19,9 +16,9 @@ use std::iter::IntoIterator;
 use std::thread::spawn;
 use discord::{Discord, State, ChannelRef};
 use discord::model::{Event, Channel, ChannelType, ChannelId, ServerId, RoleId,
-                     User, PossibleServer, OnlineStatus};
+                     MessageId, User, PossibleServer, OnlineStatus};
 use ffi::{Buffer, MAIN_BUFFER, PokeableFd, WeechatObject};
-use types::{Mention,DiscordId};
+use types::{Mention,Name,Id,DiscordId};
 use util::{ServerExt};
 use regex::Regex;
 
@@ -71,52 +68,12 @@ pub fn init() {
 #[allow(unused)]
 pub fn end(state: &Option<ConnectionState>) {}
 
-fn set_option(name: &str, value: &str) -> String {
-    extern "C" {
-        fn wdc_config_set_plugin(name: *const c_char, value: *const c_char) -> c_int;
-    }
-    let before = get_option(name);
-    let result = unsafe {
-        let name_c = unwrap1!(CString::new(name));
-        let value_c = unwrap1!(CString::new(value));
-        wdc_config_set_plugin(name_c.as_ptr(), value_c.as_ptr())
-    };
-    match (result, before) {
-        (0, Some(before)) => format!("option successfully changed from {} to {}", before, value),
-        (0, None) | (1, None) => format!("option successfully set to {}", value),
-        (1, Some(before)) => format!("option already contained {}", before),
-        (2, _) => format!("option {} not found", name),
-        (_, Some(before)) => {
-            format!("error when setting option {} to {} (was {})",
-                    name,
-                    value,
-                    before)
-        }
-        (_, None) => format!("error when setting option {} to {}", name, value),
-    }
-}
-
-fn get_option(name: &str) -> Option<String> {
-    extern "C" {
-        fn wdc_config_get_plugin(name: *const c_char) -> *const c_char;
-    }
-    unsafe {
-        let name_c = unwrap1!(CString::new(name));
-        let result = wdc_config_get_plugin(name_c.as_ptr());
-        if result.is_null() {
-            None
-        } else {
-            Some(unwrap1!(CStr::from_ptr(result).to_str()).into())
-        }
-    }
-}
-
 fn user_set_option(name: &str, value: &str) {
-    command_print(&set_option(name, value));
+    command_print(&ffi::set_option(name, value));
 }
 
 fn connect() {
-    let (email, password) = match (get_option("email"), get_option("password")) {
+    let (email, password) = match (ffi::get_option("email"), ffi::get_option("password")) {
         (Some(e), Some(p)) => (e, p),
         (email, password) => {
             MAIN_BUFFER.print("Error: plugins.var.weecord.{email,password} unset. Run:");
@@ -257,7 +214,7 @@ fn process_event(state: &ConnectionState, event: &Event) {
                             if let Some(presence) = server.find_presence(member.user.id) {
                                 if presence.status == OnlineStatus::Online ||
                                     presence.status == OnlineStatus::Idle {
-                                    buffer.add_nick(&member.user.name);
+                                    buffer.add_nick(&member.user.name());
                                 }
                             }
                         }
@@ -340,9 +297,9 @@ fn process_event(state: &ConnectionState, event: &Event) {
                         if let Some(buffer) = buffer {
                             if presence.status == OnlineStatus::Online ||
                                 presence.status == OnlineStatus::Idle {
-                                buffer.add_nick(&user.name);
+                                buffer.add_nick(&user.name());
                             } else {
-                                buffer.remove_nick(&user.name);
+                                buffer.remove_nick(&user.name());
                             }
                         }
                     }
@@ -406,10 +363,10 @@ fn get_buffer(state: &ConnectionState, channel_id: &ChannelId) -> Option<Buffer>
     let (server_name, channel_name, server_id, channel_id) = {
         let channel = try_opt!(state.state.find_channel(channel_id));
         let channel = match channel {
-            ChannelRef::Private(ch) => Some((None, ch.recipient.name.clone(), ServerId(0), ch.id)),
+            ChannelRef::Private(ch) => Some((None, ch.recipient.name().clone(), ServerId(0), ch.id)),
             ChannelRef::Public(_, ch) if ch.kind != ChannelType::Text => None,
             ChannelRef::Public(srv, ch) => {
-                Some((Some(srv.name.clone()), ch.mention(), srv.id, ch.id))
+                Some((Some(srv.name().clone()), ch.mention(), srv.id, ch.id))
             }
         };
         try_opt!(channel)
@@ -484,8 +441,8 @@ fn format_mention(name: &str) -> String {
     }
 }
 
-fn find_mention<'a, T: 'a + Mention + DiscordId, I: Iterator<Item = &'a T>>(mentionables: I,
-                                                                            id: u64)
+fn find_mention<'a, T: 'a + Mention + Id, I: Iterator<Item = &'a T>>(mentionables: I,
+                                                                            id: DiscordId)
                                                                             -> Option<String> {
     mentionables.into_iter()
         .find(|ref mention| mention.id() == id)
@@ -499,7 +456,7 @@ fn replace_mentions(state: &State, channel_id: &ChannelId, content: &str) -> Str
     RE.replace_all(content, |ref captures: &regex::Captures| {
         let x = unwrap!(captures.name("type"));
         captures.name("id")
-            .and_then(|id| id.parse::<u64>().ok())
+            .and_then(|id| id.parse::<DiscordId>().ok())
             .and_then(|id| {
                 match state.find_channel(channel_id) {
                     Some(ChannelRef::Private(ref private)) => {
@@ -576,11 +533,11 @@ fn display(state: &ConnectionState,
         None => return,
     };
     let (author, content, no_highlight) = match (author, content) {
-        (Some(author), Some(content)) => (author.name.clone(), content.into(), no_highlight || author.id == state.state.user().id),
+        (Some(author), Some(content)) => (author.name().clone(), content.into(), no_highlight || author.id == state.state.user().id),
         (Some(author), None) => {
             match find_old_msg(&buffer, &message_id) {
-                Some((_, content)) => (author.name.clone(), content, no_highlight || author.id == state.state.user().id),
-                None => (author.name.clone(), "<no content>".into(), no_highlight || author.id == state.state.user().id),
+                Some((_, content)) => (author.name().clone(), content, no_highlight || author.id == state.state.user().id),
+                None => (author.name().clone(), "<no content>".into(), no_highlight || author.id == state.state.user().id),
             }
         }
         (None, Some(content)) => {
@@ -610,7 +567,6 @@ fn display(state: &ConnectionState,
     let content = replace_mentions(&state.state, channel_id, &content);
     tags.push(format!("nick_{}", author));
     tags.push(format!("discord_messageid_{}", message_id.0));
-    let name = author.map_or("[unknown]".into(), |x| x.name.clone());
     buffer.print_tags(&tags.join(",".into()),
                       &format!("{}\t{}{}", author, prefix, content));
 }
