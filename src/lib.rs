@@ -239,9 +239,10 @@ fn process_events(state: &mut ConnectionState) {
 fn process_event(state: &ConnectionState, event: &Event) {
     match *event {
         Event::Ready(ref ready) => {
-            for private in &ready.private_channels {
-                let _ = get_buffer(state, &private.id);
-            }
+            // TODO: Setting for auto-opening private buffers
+            //for private in &ready.private_channels {
+            //    let _ = get_buffer(state, &private.id);
+            //}
             for server in &ready.servers {
                 let server = match *server {
                     PossibleServer::Online(ref server) => server,
@@ -264,7 +265,8 @@ fn process_event(state: &ConnectionState, event: &Event) {
                     Some(&message.author),
                     Some(&message.content),
                     "",
-                    is_self)
+                    is_self,
+                    false)
         }
         Event::MessageUpdate { ref id,
                                ref channel_id,
@@ -285,7 +287,8 @@ fn process_event(state: &ConnectionState, event: &Event) {
                     author.as_ref(),
                     content.as_ref().map(|x| &**x),
                     "EDIT: ",
-                    is_self)
+                    is_self,
+                    false)
         }
         Event::MessageDelete { ref message_id, ref channel_id } => {
             display(&state,
@@ -294,6 +297,7 @@ fn process_event(state: &ConnectionState, event: &Event) {
                     None,
                     None,
                     "DELETE: ",
+                    false,
                     false);
         }
         Event::ServerCreate(PossibleServer::Online(ref server)) => {
@@ -325,20 +329,67 @@ fn process_event(state: &ConnectionState, event: &Event) {
     }
 }
 
+impl Buffer {
+    fn load_backlog(&self, state: &ConnectionState, channel_id: &ChannelId) {
+        /*
+        let last_id = unwrap!(self.get_any("lines"))
+            .get_any("last_line")
+            .and_then(|line| {
+                find_tag(&line, |tag| {
+                    let term = "discord_messageid_";
+                    if tag.starts_with(term) {
+                        Some(tag.trim_left_matches(term).to_string())
+                    } else {
+                        None
+                    }
+                })
+            })
+            .and_then(|id| id.parse::<u64>().ok())
+            .map(MessageId);
+        */
+        let last_id = state.state.find_channel(channel_id).and_then(|ch| match ch {
+            ChannelRef::Private(ch) =>ch.last_message_id,
+            ChannelRef::Public(_, ch) => ch.last_message_id,
+        });
+        let messages = state.discord.get_messages(channel_id, last_id.as_ref(), None, None);
+        match messages {
+            Ok(messages) =>
+                for message in messages.iter().rev() {
+                    display(&state,
+                        &message.channel_id,
+                        &message.id,
+                        Some(&message.author),
+                        Some(&message.content),
+                        "",
+                        false,
+                        true)
+                },
+            Err(err) => {
+                self.print(&format!("Failed to load backlog, loading from disk instead: {}", err.description()));
+                self.load_weechat_backlog();
+            }
+        }
+    }
+}
+
 fn get_buffer(state: &ConnectionState, channel_id: &ChannelId) -> Option<Buffer> {
     let (server_name, channel_name, server_id, channel_id) = {
         let channel = try_opt!(state.state.find_channel(channel_id));
         let channel = match channel {
-            ChannelRef::Private(ch) => {
-                Some(("discord-pm".into(), ch.recipient.name.clone(), ServerId(0), ch.id))
-            }
+            ChannelRef::Private(ch) => Some((None, ch.recipient.name.clone(), ServerId(0), ch.id)),
             ChannelRef::Public(_, ch) if ch.kind != ChannelType::Text => None,
-            ChannelRef::Public(srv, ch) => Some((srv.name.clone(), ch.mention(), srv.id, ch.id)),
+            ChannelRef::Public(srv, ch) => {
+                Some((Some(srv.name.clone()), ch.mention(), srv.id, ch.id))
+            }
         };
         try_opt!(channel)
     };
     let buffer_id = format!("{}.{}", server_id.0, channel_id.0);
-    let buffer_name = format!("{} {}", server_name, channel_name);
+    let buffer_name = if let Some(server_name) = server_name {
+        format!("{} {}", server_name, channel_name)
+    } else {
+        channel_name
+    };
     let buffer = match Buffer::search(&buffer_id) {
         Some(buffer) => buffer,
         None => {
@@ -347,7 +398,7 @@ fn get_buffer(state: &ConnectionState, channel_id: &ChannelId) -> Option<Buffer>
             buffer.set("title", "Channel Title");
             buffer.set("type", "formatted");
             buffer.set("nicklist", "1");
-            buffer.load_backlog();
+            buffer.load_backlog(state, &channel_id);
             buffer
         }
     };
@@ -446,29 +497,35 @@ fn replace_mentions(state: &State, channel_id: &ChannelId, content: &str) -> Str
     })
 }
 
+fn find_tag<T, F: Fn(String) -> Option<T>>(line_data: &ffi::WeechatAny, pred: F) -> Option<T> {
+    let tagcount: i32 = unwrap!(line_data.get("tags_count"));
+    let tagcount = tagcount as usize;
+    for i in 0..tagcount {
+        let tag: String = unwrap!(line_data.get_idx::<ffi::SharedString>("tags_array", i)).0;
+        if let Some(result) = pred(tag) {
+            return Some(result);
+        }
+    }
+    None
+}
+
 // returns: (Prefix, Message)
 fn find_old_msg(buffer: &Buffer, message_id: &MessageId) -> Option<(String, String)> {
     let searchterm = format!("discord_messageid_{}", message_id.0);
     let mut line = unwrap!(unwrap!(buffer.get_any("lines")).get_any("last_line"));
     for _ in 0..100 {
         let data = unwrap!(line.get_any("data"));
-        let tagcount: i32 = unwrap!(data.get("tags_count"));
-        let tagcount = tagcount as usize;
-        for i in 0..tagcount {
-            let tag: String = unwrap!(data.get_idx::<ffi::SharedString>("tags_array", i)).0;
-            if tag == searchterm {
-                let prefix = unwrap!(data.get::<ffi::SharedString>("prefix")).0;
-                let message = unwrap!(data.get("message"));
-                return Some((prefix, message));
-            }
+        if let Some(()) = find_tag(&data, |tag| if tag == searchterm {
+            Some(())
+        } else {
+            None
+        }) {
+            let prefix = unwrap!(data.get::<ffi::SharedString>("prefix")).0;
+            let message = unwrap!(data.get("message"));
+            return Some((prefix, message));
         }
         if let Some(prev) = line.get_any("prev_line") {
-            if line == prev {
-                MAIN_BUFFER.print("line == prev");
-                break;
-            }
             line = prev;
-            MAIN_BUFFER.print(&format!("line: {:?}", line.ptr()));
         } else {
             break;
         }
@@ -482,35 +539,41 @@ fn display(state: &ConnectionState,
            author: Option<&User>,
            content: Option<&str>,
            prefix: &'static str,
-           self_mentioned: bool) {
+           self_mentioned: bool,
+           no_highlight: bool) {
     let buffer = match get_buffer(state, channel_id) {
         Some(buffer) => buffer,
         None => return,
     };
-    let (author, content) = match (author, content) {
-        (Some(author), Some(content)) => (author.name.clone(), content.into()),
+    let (author, content, no_highlight) = match (author, content) {
+        (Some(author), Some(content)) => (author.name.clone(), content.into(), no_highlight || author.id == state.state.user().id),
         (Some(author), None) => {
             match find_old_msg(&buffer, &message_id) {
-                Some((_, content)) => (author.name.clone(), content),
-                None => (author.name.clone(), "<no content>".into()),
+                Some((_, content)) => (author.name.clone(), content, no_highlight || author.id == state.state.user().id),
+                None => (author.name.clone(), "<no content>".into(), no_highlight || author.id == state.state.user().id),
             }
         }
         (None, Some(content)) => {
             match find_old_msg(&buffer, &message_id) {
-                Some((author, _)) => (author, content.into()),
-                None => ("[unknown]".into(), content.into()),
+                Some((author, _)) => (author, content.into(), no_highlight),
+                None => ("[unknown]".into(), content.into(), no_highlight),
             }
         }
         (None, None) => {
             match find_old_msg(&buffer, &message_id) {
-                Some(tup) => tup,
+                Some((author, content)) => (author, content, no_highlight),
                 None => return, // don't bother, we have absolutely nothing
             }
         }
     };
     let mut tags = Vec::new();
-    if self_mentioned {
+    if no_highlight {
+        tags.push("no_highlight".into());
+        tags.push("notify_none".into());
+    } else if self_mentioned {
         tags.push("notify_highlight".into());
+    } else if let Some(ChannelRef::Private(_)) = state.state.find_channel(channel_id) {
+        tags.push("notify_private".into());
     } else {
         tags.push("notify_message".into());
     };

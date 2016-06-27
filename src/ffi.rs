@@ -206,7 +206,7 @@ impl Buffer {
         }
     }
 
-    pub fn load_backlog(&self) {
+    pub fn load_weechat_backlog(&self) {
         extern "C" {
             fn wdc_load_backlog(sig_data: *mut c_void);
         }
@@ -310,7 +310,8 @@ fn wrap_panic<F: FnOnce() -> () + UnwindSafe>(f: F) -> () {
                 None => "unknown error",
             };
             let result = catch_unwind(|| {
-                MAIN_BUFFER.print(&format!("{}: Fatal error (caught) - {}", ::weechat::COMMAND, msg))
+                MAIN_BUFFER.print(&format!(
+                    "{}: Fatal error (caught) - {}", ::weechat::COMMAND, msg))
             });
             let _ = result; // eat error without logging :(
         }
