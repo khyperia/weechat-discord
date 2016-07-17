@@ -1,6 +1,5 @@
 use discord::ChannelRef;
-use discord::model::{User, Member, PrivateChannel, PublicChannel,
-                     Role, CurrentUser, LiveServer};
+use discord::model::{User, Member, PrivateChannel, PublicChannel, Role, CurrentUser, LiveServer};
 use ffi;
 use format_mention;
 
@@ -37,7 +36,7 @@ impl Name for User {
 
 impl Mention for User {
     fn mention(&self) -> String {
-        format_mention(&self.name())
+        format_mention(&self.name(), true)
     }
 }
 
@@ -49,20 +48,17 @@ impl Id for Member {
 
 impl Name for Member {
     fn name(&self) -> String {
-        get_rename_option(self.id())
-            .unwrap_or(
-                if let Some(ref nick) = self.nick {
-                    nick.clone()
-                } else {
-                    self.user.name()
-                }
-            )
+        get_rename_option(self.id()).unwrap_or(if let Some(ref nick) = self.nick {
+            nick.clone()
+        } else {
+            self.user.name()
+        })
     }
 }
 
 impl Mention for Member {
     fn mention(&self) -> String {
-        format_mention(&self.name())
+        format_mention(&self.name(), true)
     }
 }
 
@@ -80,7 +76,7 @@ impl Name for CurrentUser {
 
 impl Mention for CurrentUser {
     fn mention(&self) -> String {
-        format_mention(&self.username)
+        format_mention(&self.username, true)
     }
 }
 
@@ -95,13 +91,10 @@ impl<'a> Id for ChannelRef<'a> {
 
 impl<'a> Name for ChannelRef<'a> {
     fn name(&self) -> String {
-        get_rename_option(self.id())
-            .unwrap_or(
-                match *self {
-                    ChannelRef::Public(_, ref chan) => chan.name.clone(),
-                    ChannelRef::Private(ref chan) => chan.recipient.name.clone(),
-                }
-            )
+        get_rename_option(self.id()).unwrap_or(match *self {
+            ChannelRef::Public(_, ref chan) => chan.name.clone(),
+            ChannelRef::Private(ref chan) => chan.recipient.name.clone(),
+        })
     }
 }
 
@@ -164,7 +157,7 @@ impl Name for Role {
 
 impl Mention for Role {
     fn mention(&self) -> String {
-        format_mention(&self.name)
+        format_mention(&self.name, true)
     }
 }
 

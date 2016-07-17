@@ -230,8 +230,7 @@ impl Buffer {
 
     pub fn add_nick(&self, nick: &str) {
         extern "C" {
-            fn wdc_nicklist_add_nick(buffer: *const c_void,
-                                     nick: *const c_char);
+            fn wdc_nicklist_add_nick(buffer: *const c_void, nick: *const c_char);
         }
         unsafe {
             let nick = CString::new(nick).unwrap();
@@ -241,8 +240,7 @@ impl Buffer {
 
     pub fn remove_nick(&self, nick: &str) {
         extern "C" {
-            fn wdc_nicklist_remove_nick(buffer: *const c_void,
-                                        nick: *const c_char);
+            fn wdc_nicklist_remove_nick(buffer: *const c_void, nick: *const c_char);
         }
         unsafe {
             let nick = CString::new(nick).unwrap();

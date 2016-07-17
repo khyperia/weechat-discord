@@ -15,11 +15,11 @@ use std::error::Error;
 use std::iter::IntoIterator;
 use std::thread::spawn;
 use discord::{Discord, State, ChannelRef};
-use discord::model::{Event, Channel, ChannelType, ChannelId, ServerId, RoleId,
-                     MessageId, User, PossibleServer, OnlineStatus};
+use discord::model::{Event, Channel, ChannelType, ChannelId, ServerId, RoleId, MessageId, User,
+                     PossibleServer, OnlineStatus, Attachment};
 use ffi::{Buffer, MAIN_BUFFER, PokeableFd, WeechatObject};
-use types::{Mention,Name,Id,DiscordId};
-use util::{ServerExt};
+use types::{Mention, Name, Id, DiscordId};
+use util::ServerExt;
 use regex::Regex;
 
 mod weechat {
@@ -199,9 +199,9 @@ fn process_event(state: &ConnectionState, event: &Event) {
     match *event {
         Event::Ready(ref ready) => {
             // TODO: Setting for auto-opening private buffers
-            //for private in &ready.private_channels {
+            // for private in &ready.private_channels {
             //    let _ = get_buffer(state, &private.id);
-            //}
+            // }
             for server in &ready.servers {
                 let server = match *server {
                     PossibleServer::Online(ref server) => server,
@@ -213,7 +213,7 @@ fn process_event(state: &ConnectionState, event: &Event) {
                         for member in &server.members {
                             if let Some(presence) = server.find_presence(member.user.id) {
                                 if presence.status == OnlineStatus::Online ||
-                                    presence.status == OnlineStatus::Idle {
+                                   presence.status == OnlineStatus::Idle {
                                     buffer.add_nick(&member.user.name());
                                 }
                             }
@@ -233,6 +233,7 @@ fn process_event(state: &ConnectionState, event: &Event) {
                     &message.id,
                     Some(&message.author),
                     Some(&message.content),
+                    Some(&message.attachments),
                     "",
                     is_self,
                     false)
@@ -244,6 +245,7 @@ fn process_event(state: &ConnectionState, event: &Event) {
                                ref mention_everyone,
                                ref mentions,
                                ref mention_roles,
+                               ref attachments,
                                .. } => {
             let is_self = is_self_mentioned(&state,
                                             &channel_id,
@@ -255,6 +257,7 @@ fn process_event(state: &ConnectionState, event: &Event) {
                     &id,
                     author.as_ref(),
                     content.as_ref().map(|x| &**x),
+                    attachments.as_ref(),
                     "EDIT: ",
                     is_self,
                     false)
@@ -263,6 +266,7 @@ fn process_event(state: &ConnectionState, event: &Event) {
             display(&state,
                     &channel_id,
                     &message_id,
+                    None,
                     None,
                     None,
                     "DELETE: ",
@@ -288,15 +292,14 @@ fn process_event(state: &ConnectionState, event: &Event) {
         Event::ChannelDelete(ref channel) => {
             get_buffer(state, chan_id(&channel));
         }
-        Event::PresenceUpdate{ ref presence,
-                               .. } => {
+        Event::PresenceUpdate { ref presence, .. } => {
             for ref server in state.state.servers() {
                 if let Some(user) = server.find_user(presence.user_id) {
                     for channel in &server.channels {
                         let buffer = get_buffer(state, &channel.id);
                         if let Some(buffer) = buffer {
                             if presence.status == OnlineStatus::Online ||
-                                presence.status == OnlineStatus::Idle {
+                               presence.status == OnlineStatus::Idle {
                                 buffer.add_nick(&user.name());
                             } else {
                                 buffer.remove_nick(&user.name());
@@ -318,41 +321,28 @@ fn process_event(state: &ConnectionState, event: &Event) {
 
 impl Buffer {
     fn load_backlog(&self, state: &ConnectionState, channel_id: &ChannelId) {
-        /*
-        let last_id = unwrap!(self.get_any("lines"))
-            .get_any("last_line")
-            .and_then(|line| {
-                find_tag(&line, |tag| {
-                    let term = "discord_messageid_";
-                    if tag.starts_with(term) {
-                        Some(tag.trim_left_matches(term).to_string())
-                    } else {
-                        None
-                    }
-                })
-            })
-            .and_then(|id| id.parse::<u64>().ok())
-            .map(MessageId);
-        */
         let last_id = state.state.find_channel(channel_id).and_then(|ch| match ch {
-            ChannelRef::Private(ch) =>ch.last_message_id,
+            ChannelRef::Private(ch) => ch.last_message_id,
             ChannelRef::Public(_, ch) => ch.last_message_id,
         });
         let messages = state.discord.get_messages(channel_id, last_id.as_ref(), None, None);
         match messages {
-            Ok(messages) =>
+            Ok(messages) => {
                 for message in messages.iter().rev() {
                     display(&state,
-                        &message.channel_id,
-                        &message.id,
-                        Some(&message.author),
-                        Some(&message.content),
-                        "",
-                        false,
-                        true)
-                },
+                            &message.channel_id,
+                            &message.id,
+                            Some(&message.author),
+                            Some(&message.content),
+                            Some(&message.attachments),
+                            "",
+                            false,
+                            true)
+                }
+            }
             Err(err) => {
-                self.print(&format!("Failed to load backlog, loading from disk instead: {}", err.description()));
+                self.print(&format!("Failed to load backlog (loading from disk instead): {}",
+                                    err.description()));
                 self.load_weechat_backlog();
             }
         }
@@ -363,7 +353,9 @@ fn get_buffer(state: &ConnectionState, channel_id: &ChannelId) -> Option<Buffer>
     let (server_name, channel_name, server_id, channel_id) = {
         let channel = try_opt!(state.state.find_channel(channel_id));
         let channel = match channel {
-            ChannelRef::Private(ch) => Some((None, ch.recipient.name().clone(), ServerId(0), ch.id)),
+            ChannelRef::Private(ch) => {
+                Some((None, ch.recipient.name().clone(), ServerId(0), ch.id))
+            }
             ChannelRef::Public(_, ch) if ch.kind != ChannelType::Text => None,
             ChannelRef::Public(srv, ch) => {
                 Some((Some(srv.name().clone()), ch.mention(), srv.id, ch.id))
@@ -429,21 +421,26 @@ fn is_self_mentioned(state: &ConnectionState,
     return false;
 }
 
-fn format_mention(name: &str) -> String {
+fn format_mention(name: &str, include_at: bool) -> String {
     let surround = if let Some(color) = ffi::info_get("nick_color", name) {
         Some((color, "\u{1c}"))
     } else {
         None
     };
+    let at = if include_at {
+        "@"
+    } else {
+        ""
+    };
     match surround {
-        Some((l, r)) => format!("{}@{}{}", l, name, r),
-        None => format!("@{}", name),
+        Some((l, r)) => format!("{}{}{}{}", l, at, name, r),
+        None => format!("{}{}", at, name),
     }
 }
 
 fn find_mention<'a, T: 'a + Mention + Id, I: Iterator<Item = &'a T>>(mentionables: I,
-                                                                            id: DiscordId)
-                                                                            -> Option<String> {
+                                                                     id: DiscordId)
+                                                                     -> Option<String> {
     mentionables.into_iter()
         .find(|ref mention| mention.id() == id)
         .map(|ref mention| mention.mention())
@@ -480,7 +477,7 @@ fn replace_mentions(state: &State, channel_id: &ChannelId, content: &str) -> Str
                     _ => None,
                 }
             })
-            .unwrap_or(format_mention("unknown"))
+            .unwrap_or(format_mention("unknown", true))
     })
 }
 
@@ -525,6 +522,7 @@ fn display(state: &ConnectionState,
            message_id: &MessageId,
            author: Option<&User>,
            content: Option<&str>,
+           attachments: Option<&Vec<Attachment>>,
            prefix: &'static str,
            self_mentioned: bool,
            no_highlight: bool) {
@@ -533,11 +531,23 @@ fn display(state: &ConnectionState,
         None => return,
     };
     let (author, content, no_highlight) = match (author, content) {
-        (Some(author), Some(content)) => (author.name().clone(), content.into(), no_highlight || author.id == state.state.user().id),
+        (Some(author), Some(content)) => {
+            (format_mention(&author.name(), false),
+             content.into(),
+             no_highlight || author.id == state.state.user().id)
+        }
         (Some(author), None) => {
             match find_old_msg(&buffer, &message_id) {
-                Some((_, content)) => (author.name().clone(), content, no_highlight || author.id == state.state.user().id),
-                None => (author.name().clone(), "<no content>".into(), no_highlight || author.id == state.state.user().id),
+                Some((_, content)) => {
+                    (format_mention(&author.name(), false),
+                     content,
+                     no_highlight || author.id == state.state.user().id)
+                }
+                None => {
+                    (format_mention(&author.name(), false),
+                     "<no content>".into(),
+                     no_highlight || author.id == state.state.user().id)
+                }
             }
         }
         (None, Some(content)) => {
@@ -564,9 +574,18 @@ fn display(state: &ConnectionState,
     } else {
         tags.push("notify_message".into());
     };
-    let content = replace_mentions(&state.state, channel_id, &content);
     tags.push(format!("nick_{}", author));
     tags.push(format!("discord_messageid_{}", message_id.0));
-    buffer.print_tags(&tags.join(",".into()),
-                      &format!("{}\t{}{}", author, prefix, content));
+    let tags = tags.join(",".into());
+    let content = replace_mentions(&state.state, channel_id, &content);
+    // first into_iter is the Option iterator
+    let attachments = attachments.into_iter()
+        .flat_map(|attachments| attachments.into_iter().map(|a| a.proxy_url.clone()));
+    let content = if content.is_empty() {
+        None
+    } else {
+        Some(content)
+    };
+    let content = content.into_iter().chain(attachments).collect::<Vec<_>>().join("\n");
+    buffer.print_tags(&tags, &format!("{}\t{}{}", author, prefix, content));
 }
