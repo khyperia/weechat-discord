@@ -12,6 +12,25 @@ pub struct Buffer {
 
 pub const MAIN_BUFFER: Buffer = Buffer { ptr: 0 as *mut c_void };
 
+pub struct Completion {
+    ptr: *mut c_void,
+}
+
+pub struct Hook {
+    ptr: *mut c_void,
+}
+
+impl Drop for Hook {
+    fn drop(&mut self) {
+        extern "C" {
+            fn wdc_unhook(hook: *mut c_void);
+        }
+        unsafe {
+            wdc_unhook(self.ptr);
+        }
+    }
+}
+
 pub struct WeechatAny {
     data: *mut c_void,
     hdata: *mut c_void,
@@ -249,6 +268,18 @@ impl Buffer {
     }
 }
 
+impl Completion {
+    pub fn add(&mut self, word: &str) {
+        extern "C" {
+            fn wdc_hook_completion_add(gui_completion: *const c_void, word: *const c_char);
+        }
+        unsafe {
+            let word_c = CString::new(word).unwrap();
+            wdc_hook_completion_add(self.ptr, word_c.as_ptr());
+        }
+    }
+}
+
 impl WeechatObject for Buffer {
     fn from_ptr_hdata(ptr: *mut c_void, hdata: *mut c_void) -> Self {
         let result = Buffer { ptr: ptr };
@@ -268,7 +299,7 @@ impl WeechatObject for Buffer {
 }
 
 pub struct PokeableFd {
-    hook: *mut c_void, // struct t_hook*
+    _hook: Hook,
     pipe: [c_int; 2],
     _callback: Box<fn(&'static mut ConnectionState)>,
 }
@@ -289,8 +320,9 @@ impl PokeableFd {
             let callback = &*callback as *const fn(&'static mut ConnectionState) as *const c_void;
             wdc_hook_fd(pipe[0], callback)
         };
+        // TODO: Check if hook is nil
         PokeableFd {
-            hook: hook,
+            _hook: Hook { ptr: hook },
             pipe: pipe,
             _callback: callback,
         }
@@ -311,11 +343,7 @@ impl PokeableFdPoker {
 
 impl Drop for PokeableFd {
     fn drop(&mut self) {
-        extern "C" {
-            fn wdc_unhook(hook: *mut c_void);
-        }
         unsafe {
-            wdc_unhook(self.hook);
             close(self.pipe[0]);
             close(self.pipe[1]);
         }
@@ -386,6 +414,23 @@ pub extern "C" fn wdr_hook_fd_callback(callback: *const c_void, fd: c_int) {
         };
         let state = unwrap!(get_global_state());
         func(state);
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn wdr_hook_completion_callback(callback: *const c_void,
+                                               buffer: *mut c_void,
+                                               completion: *mut c_void) {
+    wrap_panic(|| {
+        let func = unsafe {
+            let callback_typed =
+                callback as *const fn(&'static mut ConnectionState, Buffer, Completion);
+            &*callback_typed
+        };
+        let state = unwrap!(get_global_state());
+        let buffer = Buffer { ptr: buffer };
+        let completion = Completion { ptr: completion };
+        func(state, buffer, completion);
     });
 }
 
@@ -554,5 +599,29 @@ pub fn set_option(name: &str, value: &str) -> String {
                     before)
         }
         (_, None) => format!("error when setting option {} to {}", name, value),
+    }
+}
+
+pub fn hook_completion(name: &str,
+                       description: &str,
+                       callback: &'static fn(&'static mut ConnectionState, Buffer, Completion))
+                       -> Option<Hook> {
+    extern "C" {
+        fn wdc_hook_completion(completion_item: *const c_char,
+                               description: *const c_char,
+                               callback_pointer: *const c_void)
+                               -> *mut c_void;
+    }
+    unsafe {
+        let name_c = unwrap1!(CString::new(name));
+        let description_c = unwrap1!(CString::new(description));
+        let callback_ptr = callback as *const fn(&'static mut ConnectionState, Buffer, Completion);
+        let callback_c = callback_ptr as *const c_void;
+        let result = wdc_hook_completion(name_c.as_ptr(), description_c.as_ptr(), callback_c);
+        if result.is_null() {
+            None
+        } else {
+            Some(Hook { ptr: result })
+        }
     }
 }

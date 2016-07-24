@@ -7,6 +7,7 @@ void wdr_end(void);
 void wdr_command(void*, const char*);
 void wdr_input(void*, const char*, const char*);
 void wdr_hook_fd_callback(const void*, int);
+void wdr_hook_completion_callback(const void*, void*, void*);
 
 WEECHAT_PLUGIN_NAME("weecord");
 WEECHAT_PLUGIN_DESCRIPTION("Discord support for weechat");
@@ -214,4 +215,30 @@ const char*
 wdc_hdata_string(void* hdata, void* data, const char* name)
 {
   return weechat_hdata_string(hdata, data, name);
+}
+
+static int
+wdc_hook_completion_callback(const void* pointer, void* data,
+                             const char* completion_item,
+                             struct t_gui_buffer* buffer,
+                             struct t_gui_completion* completion)
+{
+  wdr_hook_completion_callback(pointer, buffer, completion);
+  return WEECHAT_RC_OK;
+}
+
+void*
+wdc_hook_completion(const char* completion_item, const char* description,
+                    const void* callback_pointer)
+{
+  return weechat_hook_completion(completion_item, description,
+                                 wdc_hook_completion_callback, callback_pointer,
+                                 NULL);
+}
+
+void
+wdc_hook_completion_add(void* t_gui_completion, const char* word)
+{
+  weechat_hook_completion_list_add((struct t_gui_completion*)t_gui_completion,
+                                   word, 0, WEECHAT_LIST_POS_SORT);
 }

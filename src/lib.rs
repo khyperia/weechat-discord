@@ -17,7 +17,7 @@ use std::thread::spawn;
 use discord::{Discord, State, ChannelRef};
 use discord::model::{Event, Channel, ChannelType, ChannelId, ServerId, RoleId, MessageId, User,
                      PossibleServer, OnlineStatus, Attachment};
-use ffi::{Buffer, MAIN_BUFFER, PokeableFd, WeechatObject};
+use ffi::{Buffer, MAIN_BUFFER, Hook, Completion, PokeableFd, WeechatObject};
 use types::{Mention, Name, Id, DiscordId};
 use util::ServerExt;
 use regex::Regex;
@@ -53,6 +53,7 @@ pub struct ConnectionState {
     state: State,
     events: Receiver<discord::Result<Event>>,
     _pipe: PokeableFd,
+    _completion_hook: Hook,
 }
 
 // Called when plugin is loaded in Weechat
@@ -86,6 +87,15 @@ fn connect() {
             return;
         }
     };
+    static DO_COMP_STATIC: fn(&'static mut ConnectionState, ffi::Buffer, ffi::Completion) =
+        do_completion;
+    let hook = match ffi::hook_completion("weecord_completion", "", &DO_COMP_STATIC) {
+        Some(hook) => hook,
+        None => {
+            MAIN_BUFFER.print("Error: failed to hook completion");
+            return;
+        }
+    };
     command_print("connecting");
     let discord = match Discord::new(&email, &password) {
         Ok(discord) => discord,
@@ -114,6 +124,7 @@ fn connect() {
         state: dis_state,
         events: recv,
         _pipe: pipe,
+        _completion_hook: hook,
     };
     process_event(&state, &Event::Ready(ready_clone));
     ffi::set_global_state(state);
@@ -165,7 +176,8 @@ fn input(state: Option<&mut ConnectionState>,
         Some(state) => state,
         None => return,
     };
-    let result = state.discord.send_message(channel_id, message, "", false);
+    let message = replace_mentions_send(&state.state, channel_id, message);
+    let result = state.discord.send_message(channel_id, &message, "", false);
     match result {
         Ok(_) => (),
         Err(err) => buffer.print(&format!("Discord: error sending message - {}", err)),
@@ -319,6 +331,16 @@ fn process_event(state: &ConnectionState, event: &Event) {
     }
 }
 
+fn do_completion(state: &'static mut ConnectionState, buffer: Buffer, mut completion: Completion) {
+    let _ = buffer;
+    for server in state.state.servers() {
+        for member in server.members.iter() {
+            let name = format!("@{}", member.user.name());
+            completion.add(&name);
+        }
+    }
+}
+
 impl Buffer {
     fn load_backlog(&self, state: &ConnectionState, channel_id: &ChannelId) {
         let last_id = state.state.find_channel(channel_id).and_then(|ch| match ch {
@@ -444,6 +466,44 @@ fn find_mention<'a, T: 'a + Mention + Id, I: Iterator<Item = &'a T>>(mentionable
     mentionables.into_iter()
         .find(|ref mention| mention.id() == id)
         .map(|ref mention| mention.mention())
+}
+
+fn all_names<'a>(chan_ref: &ChannelRef<'a>) -> Vec<User> {
+    match *chan_ref {
+        ChannelRef::Private(ref private) => vec![private.recipient.clone()],
+        ChannelRef::Public(ref public, _) => {
+            public.members.iter().map(|m| m.user.clone()).collect()
+        }
+    }
+}
+
+fn replace_mentions_send(state: &State, channel_id: &ChannelId, content: &str) -> String {
+    let channel = match state.find_channel(channel_id) {
+        Some(channel) => channel,
+        None => return content.into(),
+    };
+    let names = all_names(&channel);
+    let mut result = String::new();
+    let mut iter = content.chars();
+    'outer: while let Some(ch) = iter.next() {
+        if ch == '@' {
+            let slice = iter.as_str();
+            for name in names.iter() {
+                let to_match = name.name();
+                if slice.starts_with(&to_match) {
+                    result.push_str(&format!("<@{}>", name.id()));
+                    for _ in 0..to_match.len() {
+                        if let None = iter.next() {
+                            break 'outer;
+                        }
+                    }
+                    continue 'outer;
+                }
+            }
+        }
+        result.push(ch);
+    }
+    result
 }
 
 fn replace_mentions(state: &State, channel_id: &ChannelId, content: &str) -> String {
