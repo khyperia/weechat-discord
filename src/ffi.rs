@@ -387,7 +387,7 @@ pub unsafe extern "C" fn wdr_input(buffer: *mut c_void,
         let channel_id = ChannelId(unwrap1!(unwrap1!(CStr::from_ptr(channel_id).to_str()).parse()));
         let input_str = unwrap1!(CStr::from_ptr(input_str).to_str());
         let state = get_global_state();
-        input(state, buffer, &channel_id, input_str);
+        input(state, buffer, channel_id, input_str);
     });
 }
 
@@ -496,11 +496,7 @@ fn hdata_pointer(hdata: *mut c_void, obj: *mut c_void, name: &str) -> Option<*mu
     unsafe {
         let name = unwrap1!(CString::new(name));
         let result = wdc_hdata_pointer(hdata, obj, name.as_ptr());
-        if result.is_null() {
-            None
-        } else {
-            Some(result)
-        }
+        if result.is_null() { None } else { Some(result) }
     }
 }
 

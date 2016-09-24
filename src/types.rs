@@ -1,174 +1,295 @@
+use std::borrow::Cow;
+use std::cmp::Eq;
 use discord::ChannelRef;
-use discord::model::{User, Member, PrivateChannel, PublicChannel, Role, CurrentUser, LiveServer};
+use discord::model::{User, Role, Emoji, Server, PrivateChannel, PublicChannel, Channel};
+use discord::model::{UserId, RoleId, EmojiId, ServerId, ChannelId};
+use discord::model::{Member, CurrentUser, LiveServer, Mention, Group};
 use ffi;
-use format_mention;
 
-pub type DiscordId = u64;
-
-pub trait Id {
-    fn id(&self) -> DiscordId;
-}
-
-pub trait Name: Id {
-    fn name(&self) -> String;
-}
-
-pub trait Mention: Name {
-    fn mention(&self) -> String;
-}
-
-fn get_rename_option(id: DiscordId) -> Option<String> {
-    let option = format!("rename.{}", id);
+fn get_rename_option<Id: DiscordId>(id: Id) -> Option<String> {
+    let option = format!("rename.{}", id.raw_id());
     ffi::get_option(&option)
 }
 
+pub trait Mentionable {
+    fn mention_tr(&self) -> Mention;
+}
+
+impl Mentionable for User {
+    fn mention_tr(&self) -> Mention {
+        self.mention()
+    }
+}
+impl Mentionable for Member {
+    fn mention_tr(&self) -> Mention {
+        self.user.mention()
+    }
+}
+impl Mentionable for Role {
+    fn mention_tr(&self) -> Mention {
+        self.mention()
+    }
+}
+impl Mentionable for PublicChannel {
+    fn mention_tr(&self) -> Mention {
+        self.mention()
+    }
+}
+
+pub trait DiscordId: Eq {
+    fn raw_id(&self) -> u64;
+}
+
+impl DiscordId for UserId {
+    fn raw_id(&self) -> u64 {
+        self.0
+    }
+}
+
+impl DiscordId for RoleId {
+    fn raw_id(&self) -> u64 {
+        self.0
+    }
+}
+
+impl DiscordId for EmojiId {
+    fn raw_id(&self) -> u64 {
+        self.0
+    }
+}
+
+impl DiscordId for ServerId {
+    fn raw_id(&self) -> u64 {
+        self.0
+    }
+}
+
+impl DiscordId for ChannelId {
+    fn raw_id(&self) -> u64 {
+        self.0
+    }
+}
+
+pub trait Id {
+    type SelfId: DiscordId;
+    fn id(&self) -> Self::SelfId;
+}
+
 impl Id for User {
-    fn id(&self) -> DiscordId {
-        self.id.0
-    }
-}
-
-impl Name for User {
-    fn name(&self) -> String {
-        get_rename_option(self.id()).unwrap_or(self.name.clone())
-    }
-}
-
-impl Mention for User {
-    fn mention(&self) -> String {
-        format_mention(&self.name(), true)
-    }
-}
-
-impl Id for Member {
-    fn id(&self) -> DiscordId {
-        self.user.id()
-    }
-}
-
-impl Name for Member {
-    fn name(&self) -> String {
-        get_rename_option(self.id()).unwrap_or(if let Some(ref nick) = self.nick {
-            nick.clone()
-        } else {
-            self.user.name()
-        })
-    }
-}
-
-impl Mention for Member {
-    fn mention(&self) -> String {
-        format_mention(&self.name(), true)
+    type SelfId = UserId;
+    fn id(&self) -> Self::SelfId {
+        self.id
     }
 }
 
 impl Id for CurrentUser {
-    fn id(&self) -> DiscordId {
-        self.id.0
+    type SelfId = UserId;
+    fn id(&self) -> Self::SelfId {
+        self.id
     }
 }
 
-impl Name for CurrentUser {
-    fn name(&self) -> String {
-        get_rename_option(self.id()).unwrap_or(self.username.clone())
+impl Id for Member {
+    type SelfId = UserId;
+    fn id(&self) -> Self::SelfId {
+        self.user.id
     }
 }
 
-impl Mention for CurrentUser {
-    fn mention(&self) -> String {
-        format_mention(&self.username, true)
+impl Id for Role {
+    type SelfId = RoleId;
+    fn id(&self) -> Self::SelfId {
+        self.id
+    }
+}
+
+impl Id for Emoji {
+    type SelfId = EmojiId;
+    fn id(&self) -> Self::SelfId {
+        self.id
+    }
+}
+
+impl Id for Server {
+    type SelfId = ServerId;
+    fn id(&self) -> Self::SelfId {
+        self.id
+    }
+}
+
+impl Id for LiveServer {
+    type SelfId = ServerId;
+    fn id(&self) -> Self::SelfId {
+        self.id
+    }
+}
+
+impl Id for PublicChannel {
+    type SelfId = ChannelId;
+    fn id(&self) -> Self::SelfId {
+        self.id
+    }
+}
+
+impl Id for PrivateChannel {
+    type SelfId = ChannelId;
+    fn id(&self) -> Self::SelfId {
+        self.id
+    }
+}
+
+impl Id for Group {
+    type SelfId = ChannelId;
+    fn id(&self) -> Self::SelfId {
+        self.channel_id
+    }
+}
+
+impl Id for Channel {
+    type SelfId = ChannelId;
+    fn id(&self) -> Self::SelfId {
+        match *self {
+            Channel::Private(ref ch) => ch.id(),
+            Channel::Group(ref ch) => ch.id(),
+            Channel::Public(ref ch) => ch.id(),
+        }
     }
 }
 
 impl<'a> Id for ChannelRef<'a> {
-    fn id(&self) -> DiscordId {
+    type SelfId = ChannelId;
+    fn id(&self) -> Self::SelfId {
         match *self {
             ChannelRef::Public(_, ref chan) => chan.id(),
+            ChannelRef::Group(ref group) => group.id(),
             ChannelRef::Private(ref chan) => chan.id(),
         }
     }
 }
 
-impl<'a> Name for ChannelRef<'a> {
-    fn name(&self) -> String {
-        get_rename_option(self.id()).unwrap_or(match *self {
-            ChannelRef::Public(_, ref chan) => chan.name.clone(),
-            ChannelRef::Private(ref chan) => chan.recipient.name.clone(),
-        })
-    }
+pub struct NameFormat {
+    include_prefix: bool,
+    include_color: bool,
 }
 
-impl<'a> Mention for ChannelRef<'a> {
-    fn mention(&self) -> String {
-        match *self {
-            ChannelRef::Public(_, ref chan) => chan.mention(),
-            ChannelRef::Private(ref chan) => chan.mention(),
+// Helpers such that construction isn't as verbose
+impl NameFormat {
+    pub fn none() -> NameFormat {
+        NameFormat {
+            include_prefix: false,
+            include_color: false,
         }
     }
+
+    pub fn color() -> NameFormat {
+        NameFormat {
+            include_prefix: false,
+            include_color: true,
+        }
+    }
+
+    pub fn prefix() -> NameFormat {
+        NameFormat {
+            include_prefix: true,
+            include_color: false,
+        }
+    }
+
+    pub fn color_prefix() -> NameFormat {
+        NameFormat {
+            include_prefix: true,
+            include_color: true,
+        }
+    }
+
+    fn format(&self, prefix: &str, name: &str) -> String {
+        let (left, right): (Cow<str>, &str) = if self.include_color {
+                ffi::info_get("nick_color", name).map(|color| (color.into(), "\u{1c}"))
+            } else {
+                None
+            }
+            .unwrap_or(("".into(), ""));
+        let at = if self.include_prefix { prefix } else { "" };
+        format!("{}{}{}{}", left, at, name, right)
+    }
 }
 
-impl Id for PublicChannel {
-    fn id(&self) -> DiscordId {
-        self.id.0
+pub trait Name: Id {
+    // (prefix, raw_name)
+    fn name_internal(&self) -> (&str, &str);
+    fn name(&self, fmt: &NameFormat) -> String {
+        let (prefix, raw_name) = self.name_internal();
+        let rename = get_rename_option(self.id());
+        let name: Cow<str> = rename.map(|x| x.into()).unwrap_or(raw_name.into());
+        fmt.format(prefix, &name)
+    }
+}
+
+impl Name for User {
+    fn name_internal(&self) -> (&str, &str) {
+        ("@", &self.name)
+    }
+}
+
+impl Name for Member {
+    // self.nick or self.user.name()
+    fn name_internal(&self) -> (&str, &str) {
+        self.nick.as_ref().map(|n| ("@", &**n)).unwrap_or(self.user.name_internal())
+    }
+}
+
+impl Name for CurrentUser {
+    fn name_internal(&self) -> (&str, &str) {
+        ("@", &self.username)
     }
 }
 
 impl Name for PublicChannel {
-    fn name(&self) -> String {
-        get_rename_option(self.id()).unwrap_or(self.name.clone())
-    }
-}
-
-impl Mention for PublicChannel {
-    fn mention(&self) -> String {
-        format!("#{}", self.name)
-    }
-}
-
-impl Id for PrivateChannel {
-    fn id(&self) -> DiscordId {
-        self.id.0
+    fn name_internal(&self) -> (&str, &str) {
+        ("#", &self.name)
     }
 }
 
 impl Name for PrivateChannel {
-    fn name(&self) -> String {
-        get_rename_option(self.id()).unwrap_or(self.recipient.name())
-    }
-}
-
-impl Mention for PrivateChannel {
-    fn mention(&self) -> String {
-        format!("@{}", self.recipient.name)
-    }
-}
-
-impl Id for Role {
-    fn id(&self) -> DiscordId {
-        self.id.0
-    }
-}
-
-impl Name for Role {
-    fn name(&self) -> String {
-        get_rename_option(self.id()).unwrap_or(self.name.clone())
-    }
-}
-
-impl Mention for Role {
-    fn mention(&self) -> String {
-        format_mention(&self.name, true)
-    }
-}
-
-impl Id for LiveServer {
-    fn id(&self) -> DiscordId {
-        self.id.0
+    fn name_internal(&self) -> (&str, &str) {
+        self.recipient.name_internal()
     }
 }
 
 impl Name for LiveServer {
-    fn name(&self) -> String {
-        get_rename_option(self.id()).unwrap_or(self.name.clone())
+    fn name_internal(&self) -> (&str, &str) {
+        ("", &self.name)
+    }
+}
+
+impl Name for Role {
+    fn name_internal(&self) -> (&str, &str) {
+        ("", &self.name)
+    }
+}
+
+impl Name for Group {
+    fn name_internal(&self) -> (&str, &str) {
+        ("", self.name.as_ref().map_or("<Group>", |name| &name))
+    }
+}
+
+impl Name for Channel {
+    fn name_internal(&self) -> (&str, &str) {
+        match *self {
+            Channel::Private(ref ch) => ch.name_internal(),
+            Channel::Group(ref ch) => ch.name_internal(),
+            Channel::Public(ref ch) => ch.name_internal(),
+        }
+    }
+}
+
+impl<'a> Name for ChannelRef<'a> {
+    fn name_internal(&self) -> (&str, &str) {
+        match *self {
+            ChannelRef::Public(_, ref chan) => chan.name_internal(),
+            ChannelRef::Group(chan) => chan.name_internal(),
+            ChannelRef::Private(ref chan) => chan.name_internal(),
+        }
     }
 }
