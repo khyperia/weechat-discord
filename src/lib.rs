@@ -519,33 +519,22 @@ fn all_names<'a>(chan_ref: &ChannelRef<'a>) -> Vec<User> {
     }
 }
 
-fn replace_mentions_send(state: &State, channel_id: ChannelId, content: &str) -> String {
+fn replace_mentions_send(state: &State, channel_id: ChannelId, mut content: String) -> String {
     let channel = match state.find_channel(&channel_id) {
         Some(channel) => channel,
-        None => return content.into(),
+        None => return content,
     };
-    let names = all_names(&channel);
-    let mut result = String::new();
-    let mut iter = content.chars();
-    'outer: while let Some(ch) = iter.next() {
-        if ch == '@' {
-            let slice = iter.as_str();
-            for name in names.iter() {
-                let to_match = name.name(&NameFormat::none());
-                if slice.starts_with(&to_match) {
-                    result.push_str(&format!("{}", name.mention()));
-                    for _ in 0..to_match.len() {
-                        if let None = iter.next() {
-                            break 'outer;
-                        }
-                    }
-                    continue 'outer;
-                }
-            }
+    let names = all_names(&channel).into_iter()
+        .map(|user| (format!("@{}", user.name(&NameFormat::none())), user.mention()))
+        .collect::<Vec<_>>();
+    // sort by descending length order
+    names.sort_by(|(a, _), (b, _)| b.len().cmp(a.len()));
+    for (name, mention) in names.iter() {
+        if content.contains(name.0) {
+            content = content.replace(name.0, format!("{}", name.1));
         }
-        result.push(ch);
     }
-    result
+    content
 }
 
 fn replace_mentions(state: &State, channel_id: ChannelId, content: &str) -> String {

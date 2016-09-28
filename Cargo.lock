@@ -46,13 +46,13 @@ dependencies = [
  "openssl 0.7.14 (registry+https://github.com/rust-lang/crates.io-index)",
  "rustc-serialize 0.3.19 (registry+https://github.com/rust-lang/crates.io-index)",
  "time 0.1.35 (registry+https://github.com/rust-lang/crates.io-index)",
- "url 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "url 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
 name = "discord"
 version = "0.6.0"
-source = "git+https://github.com/SpaceManiac/discord-rs.git#ca2919a1120ea2959bfaf6ef59d6ec5d7928fbb0"
+source = "git+https://github.com/SpaceManiac/discord-rs.git#1e378568b20b9a932a4d2a5399f1417356896938"
 dependencies = [
  "base64-rs 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "bitflags 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -156,7 +156,7 @@ dependencies = [
  "traitobject 0.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "typeable 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "unicase 1.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "url 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "url 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -426,7 +426,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "serde"
-version = "0.8.9"
+version = "0.8.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
@@ -437,7 +437,7 @@ dependencies = [
  "dtoa 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "itoa 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "num-traits 0.1.35 (registry+https://github.com/rust-lang/crates.io-index)",
- "serde 0.8.9 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde 0.8.10 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -529,7 +529,7 @@ dependencies = [
 
 [[package]]
 name = "url"
-version = "1.2.0"
+version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "idna 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -571,7 +571,7 @@ dependencies = [
  "rand 0.3.14 (registry+https://github.com/rust-lang/crates.io-index)",
  "rustc-serialize 0.3.19 (registry+https://github.com/rust-lang/crates.io-index)",
  "unicase 1.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "url 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "url 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
