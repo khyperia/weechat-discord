@@ -173,7 +173,7 @@ fn run_command(buffer: Buffer, state: Option<&mut ConnectionState>, command: &st
 fn input(state: Option<&mut ConnectionState>,
          buffer: Buffer,
          channel_id: ChannelId,
-         message: &str) {
+         message: String) {
     let state = match state {
         Some(state) => state,
         None => return,
@@ -237,18 +237,13 @@ fn process_event(state: &mut ConnectionState, event: &Event) {
                 }
             }
         }
-        Event::Resumed { .. } => {}
-        Event::UserUpdate(_) => {}
-        Event::UserNoteUpdate(_, _) => {}
-        Event::UserSettingsUpdate { .. } => {}
-        Event::UserServerSettingsUpdate(_) => {}
         Event::MessageCreate(ref message) => {
-            let is_self = is_self_mentioned(&state,
+            let is_self = is_self_mentioned(state,
                                             &message.channel_id,
                                             message.mention_everyone,
                                             Some(&message.mentions),
                                             Some(&message.mention_roles));
-            display(&state,
+            display(state,
                     message.channel_id,
                     message.id,
                     Some(&message.author),
@@ -267,12 +262,12 @@ fn process_event(state: &mut ConnectionState, event: &Event) {
                                ref mention_roles,
                                ref attachments,
                                .. } => {
-            let is_self = is_self_mentioned(&state,
+            let is_self = is_self_mentioned(state,
                                             &channel_id,
                                             mention_everyone.unwrap_or(false),
                                             mentions.as_ref(),
                                             mention_roles.as_ref());
-            display(&state,
+            display(state,
                     channel_id,
                     id,
                     author.as_ref(),
@@ -283,7 +278,7 @@ fn process_event(state: &mut ConnectionState, event: &Event) {
                     false)
         }
         Event::MessageDelete { message_id, channel_id } => {
-            display(&state,
+            display(state,
                     channel_id,
                     message_id,
                     None,
@@ -298,7 +293,6 @@ fn process_event(state: &mut ConnectionState, event: &Event) {
                 let _ = get_buffer(state, channel.id());
             }
         }
-        Event::ServerCreate(PossibleServer::Offline(_)) => (),
         Event::ServerMemberAdd(server_id, ref member) => {
             buffer_nicklist_update_id(state, server_id, &member.user, true)
         }
@@ -306,29 +300,21 @@ fn process_event(state: &mut ConnectionState, event: &Event) {
             buffer_nicklist_update_id(state, server_id, user, true)
         }
         Event::ServerMemberRemove(server_id, ref user) => {
-            buffer_nicklist_update_id(state, server_id, &user, false)
+            buffer_nicklist_update_id(state, server_id, user, false)
         }
-        Event::ServerMembersChunk(server_id, ref members) => {
-            for member in members {
-                buffer_nicklist_update_id(state, server_id, &member.user, true);
-            }
-        }
+        Event::ServerMembersChunk(server_id, ref members) |
         Event::ServerSync { server_id, ref members, .. } => {
             for member in members {
                 buffer_nicklist_update_id(state, server_id, &member.user, true);
             }
         }
-        Event::ChannelCreate(ref channel) => {
-            get_buffer(state, channel.id());
-        }
-        Event::ChannelUpdate(ref channel) => {
-            get_buffer(state, channel.id());
-        }
+        Event::ChannelCreate(ref channel) |
+        Event::ChannelUpdate(ref channel) |
         Event::ChannelDelete(ref channel) => {
             get_buffer(state, channel.id());
         }
         Event::PresenceUpdate { ref presence, .. } => {
-            for ref server in state.state.servers() {
+            for server in state.state.servers() {
                 if let Some(user) = server.find_user(presence.user_id) {
                     // let is_adding = presence.status == OnlineStatus::Online || presence.status == OnlineStatus::Idle;
                     let is_adding = true;
@@ -336,31 +322,37 @@ fn process_event(state: &mut ConnectionState, event: &Event) {
                 }
             }
         }
-        Event::VoiceStateUpdate(_, _) => {}
-        Event::VoiceServerUpdate { .. } => {}
-        Event::CallCreate(_) => {}
-        Event::CallUpdate { .. } => {}
-        Event::CallDelete(_) => {}
-        Event::ChannelRecipientAdd(_, _) => {}
-        Event::ChannelRecipientRemove(_, _) => {}
-        Event::TypingStart { .. } => {}
-        Event::PresencesReplace(_) => {}
-        Event::RelationshipAdd(_) => {}
-        Event::RelationshipRemove(_, _) => {}
-        Event::MessageAck { .. } => {}
-        Event::MessageDeleteBulk { .. } => {}
-        Event::ServerUpdate(_) => {}
-        Event::ServerDelete(_) => {}
-        Event::ServerRoleCreate(_, _) => {}
-        Event::ServerRoleUpdate(_, _) => {}
-        Event::ServerRoleDelete(_, _) => {}
-        Event::ServerBanAdd(_, _) => {}
-        Event::ServerBanRemove(_, _) => {}
-        Event::ServerIntegrationsUpdate(_) => {}
-        Event::ServerEmojisUpdate(_, _) => {}
-        Event::ChannelPinsAck { .. } => {}
-        Event::ChannelPinsUpdate { .. } => {}
-        Event::Unknown(_, _) => {}
+        Event::Resumed { .. } |
+        Event::UserUpdate(_) |
+        Event::UserNoteUpdate(_, _) |
+        Event::UserSettingsUpdate { .. } |
+        Event::UserServerSettingsUpdate(_) |
+        Event::VoiceStateUpdate(_, _) |
+        Event::VoiceServerUpdate { .. } |
+        Event::CallCreate(_) |
+        Event::CallUpdate { .. } |
+        Event::CallDelete(_) |
+        Event::ChannelRecipientAdd(_, _) |
+        Event::ChannelRecipientRemove(_, _) |
+        Event::TypingStart { .. } |
+        Event::PresencesReplace(_) |
+        Event::RelationshipAdd(_) |
+        Event::RelationshipRemove(_, _) |
+        Event::MessageAck { .. } |
+        Event::MessageDeleteBulk { .. } |
+        Event::ServerCreate(PossibleServer::Offline(_)) |
+        Event::ServerUpdate(_) |
+        Event::ServerDelete(_) |
+        Event::ServerRoleCreate(_, _) |
+        Event::ServerRoleUpdate(_, _) |
+        Event::ServerRoleDelete(_, _) |
+        Event::ServerBanAdd(_, _) |
+        Event::ServerBanRemove(_, _) |
+        Event::ServerIntegrationsUpdate(_) |
+        Event::ServerEmojisUpdate(_, _) |
+        Event::ChannelPinsAck { .. } |
+        Event::ChannelPinsUpdate { .. } |
+        Event::Unknown(_, _) |
         _ => (),
     }
 }
@@ -369,7 +361,7 @@ fn buffer_nicklist_update_id(state: &ConnectionState,
                              server_id: ServerId,
                              user: &User,
                              is_adding: bool) {
-    for ref server in state.state.servers() {
+    for server in state.state.servers() {
         if server.id() == server_id {
             buffer_nicklist_update(state, server, user, is_adding);
         }
@@ -394,7 +386,7 @@ fn buffer_nicklist_update(state: &ConnectionState,
 fn do_completion(state: &mut ConnectionState, buffer: Buffer, mut completion: Completion) {
     let _ = buffer;
     for server in state.state.servers() {
-        for member in server.members.iter() {
+        for member in &server.members {
             let name = member.name(&NameFormat::prefix());
             completion.add(&name);
         }
@@ -407,7 +399,7 @@ impl Buffer {
         match messages {
             Ok(messages) => {
                 for message in messages.iter().rev() {
-                    display(&state,
+                    display(state,
                             message.channel_id,
                             message.id,
                             Some(&message.author),
@@ -479,7 +471,7 @@ fn is_self_mentioned(state: &ConnectionState,
             }
         }
     }
-    let server = state.state.find_channel(&channel_id).and_then(|channel| match channel {
+    let server = state.state.find_channel(channel_id).and_then(|channel| match channel {
         ChannelRef::Public(server, _) => Some(server),
         _ => None,
     });
@@ -495,8 +487,8 @@ fn is_self_mentioned(state: &ConnectionState,
                 }
             }
         }
-    }
-    return false;
+    };
+    false
 }
 
 fn find_name<'a, SearchId: DiscordId, T: 'a + Name<SelfId = SearchId>, I: Iterator<Item = &'a T>>
@@ -505,15 +497,15 @@ fn find_name<'a, SearchId: DiscordId, T: 'a + Name<SelfId = SearchId>, I: Iterat
      format: &NameFormat)
      -> Option<String> {
     items.into_iter()
-        .find(|ref item| item.id() == id)
-        .map(|ref item| item.name(format))
+        .find(|item| item.id() == id)
+        .map(|item| item.name(format))
 }
 
-fn all_names<'a>(chan_ref: &ChannelRef<'a>) -> Vec<User> {
+fn all_names(chan_ref: &ChannelRef) -> Vec<User> {
     match *chan_ref {
-        ChannelRef::Private(ref private) => vec![private.recipient.clone()],
-        ChannelRef::Group(ref group) => group.recipients.clone(),
-        ChannelRef::Public(ref public, _) => {
+        ChannelRef::Private(private) => vec![private.recipient.clone()],
+        ChannelRef::Group(group) => group.recipients.clone(),
+        ChannelRef::Public(public, _) => {
             public.members.iter().map(|m| m.user.clone()).collect()
         }
     }
@@ -524,14 +516,14 @@ fn replace_mentions_send(state: &State, channel_id: ChannelId, mut content: Stri
         Some(channel) => channel,
         None => return content,
     };
-    let names = all_names(&channel).into_iter()
-        .map(|user| (format!("@{}", user.name(&NameFormat::none())), user.mention()))
+    let mut names = all_names(&channel).into_iter()
+        .map(|user| (user.name(&NameFormat::prefix()), user.mention()))
         .collect::<Vec<_>>();
     // sort by descending length order
-    names.sort_by(|(a, _), (b, _)| b.len().cmp(a.len()));
-    for (name, mention) in names.iter() {
-        if content.contains(name.0) {
-            content = content.replace(name.0, format!("{}", name.1));
+    names.sort_by(|&(ref a, _), &(ref b, _)| b.len().cmp(&a.len()));
+    for &(ref name, ref mention) in &names {
+        if content.contains(&*name) {
+            content = content.replace(&*name, &format!("{}", mention));
         }
     }
     content
@@ -546,14 +538,14 @@ fn replace_mentions(state: &State, channel_id: ChannelId, content: &str) -> Stri
         None => return content.into(),
     };
     let format = NameFormat::color_prefix();
-    RE.replace_all(content, |ref captures: &regex::Captures| {
+    RE.replace_all(content, |captures: &regex::Captures| {
         let mention_type = unwrap!(captures.name("type"));
         let id = unwrap!(captures.name("id"));
         id.parse::<u64>()
             .ok()
             .and_then(|id| {
                 match channel {
-                    ChannelRef::Private(ref private) => {
+                    ChannelRef::Private(private) => {
                         if private.recipient.id() == UserId(id) {
                             Some(private.recipient.name(&format))
                         } else if state.user().id() == UserId(id) {
@@ -562,7 +554,7 @@ fn replace_mentions(state: &State, channel_id: ChannelId, content: &str) -> Stri
                             None
                         }
                     }
-                    ChannelRef::Public(ref server, _) => {
+                    ChannelRef::Public(server, _) => {
                         match mention_type {
                             "@" => {
                                 find_name(server.members.iter().map(|x| &x.user),
@@ -575,7 +567,7 @@ fn replace_mentions(state: &State, channel_id: ChannelId, content: &str) -> Stri
                             _ => None,
                         }
                     }
-                    ChannelRef::Group(ref group) => {
+                    ChannelRef::Group(group) => {
                         match mention_type {
                             "@" | "@!" => find_name(group.recipients.iter(), UserId(id), &format),
                             _ => None,

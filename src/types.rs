@@ -160,9 +160,9 @@ impl<'a> Id for ChannelRef<'a> {
     type SelfId = ChannelId;
     fn id(&self) -> Self::SelfId {
         match *self {
-            ChannelRef::Public(_, ref chan) => chan.id(),
-            ChannelRef::Group(ref group) => group.id(),
-            ChannelRef::Private(ref chan) => chan.id(),
+            ChannelRef::Public(_, chan) => chan.id(),
+            ChannelRef::Group(group) => group.id(),
+            ChannelRef::Private(chan) => chan.id(),
         }
     }
 }
@@ -270,7 +270,7 @@ impl Name for Role {
 
 impl Name for Group {
     fn name_internal(&self) -> (&str, &str) {
-        ("", self.name.as_ref().map_or("<Group>", |name| &name))
+        ("", self.name.as_ref().map_or("<Group>", |name| name))
     }
 }
 
@@ -287,9 +287,9 @@ impl Name for Channel {
 impl<'a> Name for ChannelRef<'a> {
     fn name_internal(&self) -> (&str, &str) {
         match *self {
-            ChannelRef::Public(_, ref chan) => chan.name_internal(),
+            ChannelRef::Public(_, chan) => chan.name_internal(),
             ChannelRef::Group(chan) => chan.name_internal(),
-            ChannelRef::Private(ref chan) => chan.name_internal(),
+            ChannelRef::Private(chan) => chan.name_internal(),
         }
     }
 }

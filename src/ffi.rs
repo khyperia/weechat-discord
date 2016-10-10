@@ -69,7 +69,7 @@ pub trait WeechatObject {
                                    field_type));
             }
         }
-        T::new::<Self>(&self, &field)
+        T::new::<Self>(self, field)
     }
 
     fn get_idx<T: HDataGetResult>(&self, field: &str, index: usize) -> Option<T> {
@@ -351,7 +351,7 @@ impl Drop for PokeableFd {
 }
 
 fn wrap_panic<F: FnOnce() -> () + UnwindSafe>(f: F) -> () {
-    let result = catch_unwind(|| f());
+    let result = catch_unwind(f);
     match result {
         Ok(()) => (),
         Err(err) => {
@@ -370,12 +370,12 @@ fn wrap_panic<F: FnOnce() -> () + UnwindSafe>(f: F) -> () {
 
 #[no_mangle]
 pub extern "C" fn wdr_end() {
-    wrap_panic(|| drop_global_state());
+    wrap_panic(drop_global_state);
 }
 
 #[no_mangle]
 pub extern "C" fn wdr_init() {
-    wrap_panic(|| ::init());
+    wrap_panic(::init);
 }
 
 #[no_mangle]
@@ -387,7 +387,7 @@ pub unsafe extern "C" fn wdr_input(buffer: *mut c_void,
         let channel_id = ChannelId(unwrap1!(unwrap1!(CStr::from_ptr(channel_id).to_str()).parse()));
         let input_str = unwrap1!(CStr::from_ptr(input_str).to_str());
         let state = get_global_state();
-        input(state, buffer, channel_id, input_str);
+        input(state, buffer, channel_id, input_str.into());
     });
 }
 
@@ -397,7 +397,7 @@ pub unsafe extern "C" fn wdr_command(buffer_c: *mut c_void, command_c: *const c_
         let buffer = Buffer { ptr: buffer_c };
         let state = get_global_state();
         let command = unwrap1!(CStr::from_ptr(command_c).to_str());
-        if run_command(buffer, state, command) == false {
+        if !run_command(buffer, state, command) {
             drop_global_state();
         }
     });
