@@ -9,15 +9,19 @@ pub mod ffi;
 mod types;
 mod util;
 
-use std::mem::drop;
-use std::sync::mpsc::{channel, Receiver, TryRecvError};
+use std::borrow::Cow;
+use std::cell::RefCell;
 use std::error::Error;
 use std::iter::IntoIterator;
+use std::mem::drop;
+use std::rc::Rc;
+use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::thread::spawn;
-use discord::{Discord, State, ChannelRef, GetMessages};
+
 use discord::model::{Event, ChannelType, User, LiveServer, PossibleServer, OnlineStatus,
-                     Attachment};
-use discord::model::{UserId, RoleId, ServerId, ChannelId, MessageId};
+                     Attachment, UserId, RoleId, ServerId, ChannelId, MessageId};
+use discord::{Discord, State, ChannelRef, GetMessages};
+
 use ffi::{Buffer, MAIN_BUFFER, Hook, Completion, PokeableFd, WeechatObject};
 use types::{Name, Id, DiscordId, NameFormat};
 use util::ServerExt;
@@ -53,17 +57,22 @@ pub struct ConnectionState {
     discord: Discord,
     state: State,
     events: Receiver<discord::Result<Event>>,
-    _pipe: PokeableFd,
-    _completion_hook: Hook,
+    _completion_hook: Option<Hook>,
+    _poke_fd: Option<PokeableFd>,
 }
 
 // Called when plugin is loaded in Weechat
+// TODO
 pub fn init() {
-    ffi::hook_command(weechat::COMMAND,
+    let mut state = Box::new(None);
+    let hook = ffi::hook_command(weechat::COMMAND,
                       weechat::DESCRIPTION,
                       weechat::ARGS,
                       weechat::ARGDESC,
-                      weechat::COMPLETIONS);
+                      weechat::COMPLETIONS, move |buffer, input| {
+                          run_command(buffer, state.as_mut(), input)
+                      });
+    ::std::mem::forget(hook); // TODO: Memory leak here.
 }
 
 // Called when plugin is unloaded in Weechat
@@ -74,7 +83,7 @@ fn user_set_option(name: &str, value: &str) {
     command_print(&ffi::set_option(name, value));
 }
 
-fn connect() {
+fn connect() -> Option<Rc<RefCell<ConnectionState>>> {
     let (email, password) = match (ffi::get_option("email"), ffi::get_option("password")) {
         (Some(e), Some(p)) => (e, p),
         (email, password) => {
@@ -85,16 +94,7 @@ fn connect() {
             if password.is_none() {
                 MAIN_BUFFER.print("/discord password hunter2");
             }
-            return;
-        }
-    };
-    static DO_COMP_STATIC: fn(&'static mut ConnectionState, ffi::Buffer, ffi::Completion) =
-        do_completion;
-    let hook = match ffi::hook_completion("weecord_completion", "", &DO_COMP_STATIC) {
-        Some(hook) => hook,
-        None => {
-            MAIN_BUFFER.print("Error: failed to hook completion");
-            return;
+            return None;
         }
     };
     command_print("connecting");
@@ -102,34 +102,60 @@ fn connect() {
         Ok(discord) => discord,
         Err(err) => {
             command_print(&format!("Login error: {}", err));
-            return;
+            return None;
         }
     };
     let (mut connection, ready) = match discord.connect() {
         Ok(ok) => ok,
         Err(err) => {
             command_print(&format!("connection error: {}", err));
-            return;
+            return None;
         }
     };
     let ready_clone = ready.clone();
     let dis_state = State::new(ready);
-
     // TODO: on_ready (open MAIN_BUFFERs, etc)
     command_print("connected");
     let (send, recv) = channel();
-    let pipe = PokeableFd::new(Box::new(process_events));
-    let pipe_poker = pipe.get_poker();
-    let mut state = ConnectionState {
+    let state = ConnectionState {
         discord: discord,
         state: dis_state,
         events: recv,
-        _pipe: pipe,
-        _completion_hook: hook,
+        _completion_hook: None,
+        _poke_fd: None,
     };
-    process_event(&mut state, &Event::Ready(ready_clone));
-    connection.sync_servers(&state.state.all_servers()[..]);
-    ffi::set_global_state(state);
+    let state = Rc::new(RefCell::new(state));
+
+    let state_comp = Rc::downgrade(&state);
+    let completion_hook = ffi::hook_completion("weecord_completion", "", move |buffer, completion| {
+        if let Some(state) = state_comp.upgrade() {
+            do_completion(&*state.borrow(), buffer, completion)
+        };
+    });
+    let completion_hook = match completion_hook {
+        Some(hook) => hook,
+        None => {
+            MAIN_BUFFER.print("Error: failed to hook completion");
+            return None;
+        }
+    };
+
+    let state_pipe = Rc::downgrade(&state);
+    let pipe = PokeableFd::new(move || {
+        if let Some(mut state) = state_pipe.upgrade() {
+            process_events(&mut state);
+        }
+    });
+    let pipe_poker = pipe.get_poker();
+
+    {
+        let state = &mut *state.borrow_mut();
+        state._completion_hook = Some(completion_hook);
+        state._poke_fd = Some(pipe);
+    }
+
+    process_event(&state, &Event::Ready(ready_clone));
+    connection.sync_servers(&state.borrow().state.all_servers()[..]);
     spawn(move || {
         loop {
             let event = connection.recv_event();
@@ -144,22 +170,22 @@ fn connect() {
         drop(send);
         pipe_poker.poke();
     });
+    Some(state)
 }
 
 fn command_print(message: &str) {
     MAIN_BUFFER.print(&format!("{}: {}", &weechat::COMMAND, message));
 }
 
-fn run_command(buffer: Buffer, state: Option<&mut ConnectionState>, command: &str) -> bool {
-    let _ = state;
+fn run_command(buffer: Buffer, state: &mut Option<Rc<RefCell<ConnectionState>>>, command: &str) {
     let _ = buffer;
     if command == "" {
         command_print("see /help discord for more information")
     } else if command == "connect" {
-        connect();
+        *state = connect();
     } else if command == "disconnect" {
+        *state = None;
         command_print("disconnected");
-        return false;
     } else if command.starts_with("email ") {
         user_set_option("email", &command["email ".len()..]);
     } else if command.starts_with("password ") {
@@ -167,18 +193,10 @@ fn run_command(buffer: Buffer, state: Option<&mut ConnectionState>, command: &st
     } else {
         command_print("unknown command");
     }
-    true
 }
 
-fn input(state: Option<&mut ConnectionState>,
-         buffer: Buffer,
-         channel_id: ChannelId,
-         message: String) {
-    let state = match state {
-        Some(state) => state,
-        None => return,
-    };
-    let message = replace_mentions_send(&state.state, channel_id, message);
+fn input(state: &ConnectionState, buffer: Buffer, channel_id: ChannelId, message: &str) {
+    let message = replace_mentions_send(&state.state, channel_id, message.into());
     let result = state.discord.send_message(&channel_id, &message, "", false);
     match result {
         Ok(_) => (),
@@ -186,9 +204,9 @@ fn input(state: Option<&mut ConnectionState>,
     };
 }
 
-fn process_events(state: &mut ConnectionState) {
+fn process_events(state: &Rc<RefCell<ConnectionState>>) {
     loop {
-        let event = state.events.try_recv();
+        let event = state.borrow().events.try_recv();
         let event = match event {
             Ok(event) => event,
             Err(TryRecvError::Empty) => return,
@@ -204,13 +222,13 @@ fn process_events(state: &mut ConnectionState) {
                 continue;
             }
         };
-        state.state.update(&event);
         process_event(state, &event);
     }
 }
 
-fn process_event(state: &mut ConnectionState, event: &Event) {
-    //MAIN_BUFFER.print(&format!("{:?}", event));
+fn process_event(state: &Rc<RefCell<ConnectionState>>, event: &Event) {
+    state.borrow_mut().state.update(event);
+    // MAIN_BUFFER.print(&format!("{:?}", event));
     match *event {
         Event::Ready(ref ready) => {
             // TODO: Setting for auto-opening private buffers
@@ -238,7 +256,7 @@ fn process_event(state: &mut ConnectionState, event: &Event) {
             }
         }
         Event::MessageCreate(ref message) => {
-            let is_self = is_self_mentioned(state,
+            let is_self = is_self_mentioned(&*state.borrow(),
                                             &message.channel_id,
                                             message.mention_everyone,
                                             Some(&message.mentions),
@@ -262,7 +280,7 @@ fn process_event(state: &mut ConnectionState, event: &Event) {
                                ref mention_roles,
                                ref attachments,
                                .. } => {
-            let is_self = is_self_mentioned(state,
+            let is_self = is_self_mentioned(&*state.borrow(),
                                             &channel_id,
                                             mention_everyone.unwrap_or(false),
                                             mentions.as_ref(),
@@ -314,9 +332,10 @@ fn process_event(state: &mut ConnectionState, event: &Event) {
             get_buffer(state, channel.id());
         }
         Event::PresenceUpdate { ref presence, .. } => {
-            for server in state.state.servers() {
+            for server in state.borrow().state.servers() {
                 if let Some(user) = server.find_user(presence.user_id) {
-                    // let is_adding = presence.status == OnlineStatus::Online || presence.status == OnlineStatus::Idle;
+                    // let is_adding = presence.status == OnlineStatus::Online
+                    //   || presence.status == OnlineStatus::Idle;
                     let is_adding = true;
                     buffer_nicklist_update(state, server, user, is_adding);
                 }
@@ -357,18 +376,18 @@ fn process_event(state: &mut ConnectionState, event: &Event) {
     }
 }
 
-fn buffer_nicklist_update_id(state: &ConnectionState,
+fn buffer_nicklist_update_id(state: &Rc<RefCell<ConnectionState>>,
                              server_id: ServerId,
                              user: &User,
                              is_adding: bool) {
-    for server in state.state.servers() {
+    for server in state.borrow().state.servers() {
         if server.id() == server_id {
             buffer_nicklist_update(state, server, user, is_adding);
         }
     }
 }
 
-fn buffer_nicklist_update(state: &ConnectionState,
+fn buffer_nicklist_update(state: &Rc<RefCell<ConnectionState>>,
                           server: &LiveServer,
                           user: &User,
                           is_adding: bool) {
@@ -383,7 +402,7 @@ fn buffer_nicklist_update(state: &ConnectionState,
     }
 }
 
-fn do_completion(state: &mut ConnectionState, buffer: Buffer, mut completion: Completion) {
+fn do_completion(state: &ConnectionState, buffer: Buffer, mut completion: Completion) {
     let _ = buffer;
     for server in state.state.servers() {
         for member in &server.members {
@@ -394,8 +413,8 @@ fn do_completion(state: &mut ConnectionState, buffer: Buffer, mut completion: Co
 }
 
 impl Buffer {
-    fn load_backlog(&self, state: &ConnectionState, channel_id: ChannelId) {
-        let messages = state.discord.get_messages(channel_id, GetMessages::MostRecent, None);
+    fn load_backlog(&self, state: &Rc<RefCell<ConnectionState>>, channel_id: ChannelId) {
+        let messages = state.borrow().discord.get_messages(channel_id, GetMessages::MostRecent, None);
         match messages {
             Ok(messages) => {
                 for message in messages.iter().rev() {
@@ -419,30 +438,39 @@ impl Buffer {
     }
 }
 
-fn get_buffer(state: &ConnectionState, channel_id: ChannelId) -> Option<Buffer> {
-    let channel = try_opt!(state.state.find_channel(&channel_id));
-    let server = if let ChannelRef::Public(srv, ch) = channel {
-        if ch.kind != ChannelType::Text {
-            return None;
-        }
-        Some(srv)
-    } else {
-        None
-    };
-    let channel_name = channel.name(&NameFormat::prefix());
-    let channel_id = channel.id();
-    let server_name = server.map(|s| s.name(&NameFormat::none()));
-    let server_id = server.map_or(ServerId(0), |s| s.id());
-    let buffer_id = format!("{}.{}", server_id.0, channel_id.0);
-    let buffer_name = if let Some(server_name) = server_name {
-        format!("{} {}", server_name, channel_name)
-    } else {
-        channel_name
+fn get_buffer(state: &Rc<RefCell<ConnectionState>>, channel_id: ChannelId) -> Option<Buffer> {
+    let (buffer_id, buffer_name) = {
+        let state = state.borrow();
+        let channel = try_opt!(state.state.find_channel(&channel_id));
+        let server = if let ChannelRef::Public(srv, ch) = channel {
+            if ch.kind != ChannelType::Text {
+                return None;
+            }
+            Some(srv)
+        } else {
+            None
+        };
+        let channel_name = channel.name(&NameFormat::prefix());
+        let channel_id = channel.id();
+        let server_name = server.map(|s| s.name(&NameFormat::none()));
+        let server_id = server.map_or(ServerId(0), |s| s.id());
+        let buffer_id = format!("{}.{}", server_id.0, channel_id.0);
+        let buffer_name = if let Some(server_name) = server_name {
+            format!("{} {}", server_name, channel_name)
+        } else {
+            channel_name
+        };
+        (buffer_id, buffer_name)
     };
     let buffer = match Buffer::search(&buffer_id) {
         Some(buffer) => buffer,
         None => {
-            let buffer = try_opt!(Buffer::new(&buffer_id, &channel_id));
+            let state_weak = Rc::downgrade(state);
+            let buffer = try_opt!(Buffer::new(&buffer_id, move |buffer, input_str| {
+                if let Some(state) = state_weak.upgrade() {
+                    input(&*state.borrow(), buffer, channel_id, input_str);
+                }
+            }));
             buffer.set("short_name", &buffer_name);
             buffer.set("title", "Channel Title");
             buffer.set("type", "formatted");
@@ -505,25 +533,24 @@ fn all_names(chan_ref: &ChannelRef) -> Vec<User> {
     match *chan_ref {
         ChannelRef::Private(private) => vec![private.recipient.clone()],
         ChannelRef::Group(group) => group.recipients.clone(),
-        ChannelRef::Public(public, _) => {
-            public.members.iter().map(|m| m.user.clone()).collect()
-        }
+        ChannelRef::Public(public, _) => public.members.iter().map(|m| m.user.clone()).collect(),
     }
 }
 
-fn replace_mentions_send(state: &State, channel_id: ChannelId, mut content: String) -> String {
+fn replace_mentions_send<'a>(state: &State, channel_id: ChannelId, mut content: Cow<'a, str>) -> Cow<'a, str> {
     let channel = match state.find_channel(&channel_id) {
         Some(channel) => channel,
         None => return content,
     };
-    let mut names = all_names(&channel).into_iter()
+    let mut names = all_names(&channel)
+        .into_iter()
         .map(|user| (user.name(&NameFormat::prefix()), user.mention()))
         .collect::<Vec<_>>();
     // sort by descending length order
     names.sort_by(|&(ref a, _), &(ref b, _)| b.len().cmp(&a.len()));
     for &(ref name, ref mention) in &names {
         if content.contains(&*name) {
-            content = content.replace(&*name, &format!("{}", mention));
+            content = content.into_owned().replace(&*name, &format!("{}", mention)).into();
         }
     }
     content
@@ -615,7 +642,7 @@ fn find_old_msg(buffer: &Buffer, message_id: &MessageId) -> Option<(String, Stri
     None
 }
 
-fn display(state: &ConnectionState,
+fn display(state: &Rc<RefCell<ConnectionState>>,
            channel_id: ChannelId,
            message_id: MessageId,
            author: Option<&User>,
@@ -624,11 +651,22 @@ fn display(state: &ConnectionState,
            prefix: &'static str,
            self_mentioned: bool,
            no_highlight: bool) {
-    let channel = state.state.find_channel(&channel_id);
-    if let Some(ChannelRef::Public(server, _)) = channel {
-        if let Some(author) = author {
-            buffer_nicklist_update(state, server, author, true);
+    let (is_private, temp) = {
+        let state = state.borrow();
+        let channel = state.state.find_channel(&channel_id);
+        let is_private = if let Some(ChannelRef::Private(_)) = channel { true } else { false };
+        if let Some(ChannelRef::Public(server, _)) = channel {
+            if let Some(author) = author {
+                (is_private, Some((server.clone(), author.clone())))
+            } else {
+                (is_private, None)
+            }
+        } else {
+            (is_private, None)
         }
+    };
+    if let Some((server, author)) = temp {
+        buffer_nicklist_update(state, &server, &author, true);
     }
     let buffer = match get_buffer(state, channel_id) {
         Some(buffer) => buffer,
@@ -639,19 +677,19 @@ fn display(state: &ConnectionState,
         (Some(author), Some(content)) => {
             (author.name(&author_format),
              content.into(),
-             no_highlight || author.id() == state.state.user().id())
+             no_highlight || author.id() == state.borrow().state.user().id())
         }
         (Some(author), None) => {
             match find_old_msg(&buffer, &message_id) {
                 Some((_, content)) => {
                     (author.name(&author_format),
                      content,
-                     no_highlight || author.id == state.state.user().id)
+                     no_highlight || author.id == state.borrow().state.user().id)
                 }
                 None => {
                     (author.name(&author_format),
                      "<no content>".into(),
-                     no_highlight || author.id == state.state.user().id)
+                     no_highlight || author.id == state.borrow().state.user().id)
                 }
             }
         }
@@ -674,7 +712,7 @@ fn display(state: &ConnectionState,
         tags.push("notify_none".into());
     } else if self_mentioned {
         tags.push("notify_highlight".into());
-    } else if let Some(ChannelRef::Private(_)) = channel {
+    } else if is_private {
         tags.push("notify_private".into());
     } else {
         tags.push("notify_message".into());
@@ -682,7 +720,7 @@ fn display(state: &ConnectionState,
     tags.push(format!("nick_{}", author));
     tags.push(format!("discord_messageid_{}", message_id.0));
     let tags = tags.join(",".into());
-    let content = replace_mentions(&state.state, channel_id, &content);
+    let content = replace_mentions(&state.borrow().state, channel_id, &content);
     // first into_iter is the Option iterator
     let attachments = attachments.into_iter()
         .flat_map(|attachments| attachments.into_iter().map(|a| a.proxy_url.clone()));

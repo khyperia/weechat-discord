@@ -1,13 +1,9 @@
-#include <stdlib.h>
-#include <string.h>
 #include <weechat-plugin.h>
+
+#define NULL ((void*)0)
 
 void wdr_init(void);
 void wdr_end(void);
-void wdr_command(void*, const char*);
-void wdr_input(void*, const char*, const char*);
-void wdr_hook_fd_callback(const void*, int);
-void wdr_hook_completion_callback(const void*, void*, void*);
 
 WEECHAT_PLUGIN_NAME("weecord");
 WEECHAT_PLUGIN_DESCRIPTION("Discord support for weechat");
@@ -35,25 +31,19 @@ weechat_plugin_end(struct t_weechat_plugin* plugin)
   return WEECHAT_RC_OK;
 }
 
-static int
-hook_command_callback(const void* pointer, void* data,
-                      struct t_gui_buffer* buffer, int argc, char** argv,
-                      char** argv_eol)
-{
-  if (argc < 2) {
-    wdr_command(buffer, "");
-  } else {
-    wdr_command(buffer, argv_eol[1]);
-  }
-  return WEECHAT_RC_OK;
-}
-
-void
+struct t_hook*
 wdc_hook_command(const char* command, const char* description, const char* args,
-                 const char* args_description, const char* completion)
+                 const char* args_description, const char* completion,
+                 const void* pointer,
+                 int (*callback)(const void *pointer,
+                    void *data,
+                    struct t_gui_buffer *buffer,
+                    int argc,
+                    char **argv,
+                    char **argv_eol))
 {
-  (void)weechat_hook_command(command, description, args, args_description,
-                             completion, hook_command_callback, NULL, NULL);
+  return weechat_hook_command(command, description, args, args_description,
+                             completion, callback, pointer, NULL);
 }
 
 void
@@ -97,28 +87,18 @@ wdc_buffer_search(const char* name)
   return weechat_buffer_search("weecord", name);
 }
 
-int
-buffer_input_callback(const void* pointer, void* datatmp,
-                      struct t_gui_buffer* buffer, const char* input_data)
-{
-  const char* data = (const char*)datatmp;
-  wdr_input(buffer, data, input_data);
-  return WEECHAT_RC_OK;
-}
-
-int
-buffer_close_callback(const void* pointer, void* data,
-                      struct t_gui_buffer* buffer)
-{
-  return WEECHAT_RC_OK;
-}
-
 struct t_gui_buffer*
-wdc_buffer_new(const char* name, const char* data)
+wdc_buffer_new(const char* name,
+        const void *pointer,
+        int (*input_callback)(const void *pointer,
+            void *data,
+            struct t_gui_buffer *buffer,
+            const char *input_data),
+        int (*close_callback)(const void *pointer,
+            void *data,
+            struct t_gui_buffer *buffer))
 {
-  // strdup result auto-freed by weechat on buffer close
-  return weechat_buffer_new(name, buffer_input_callback, NULL, strdup(data),
-                            buffer_close_callback, NULL, NULL);
+  return weechat_buffer_new(name, input_callback, pointer, NULL, close_callback, pointer, NULL);
 }
 
 void
@@ -141,17 +121,11 @@ wdc_load_backlog(void* buffer)
   wdc_hook_signal_send("logger_backlog", WEECHAT_HOOK_SIGNAL_POINTER, buffer);
 }
 
-static int
-hook_fd_callback(const void* pointer, void* data, int fd)
+struct t_hook*
+wdc_hook_fd(int fd, const void* pointer,
+            int (*callback)(const void* pointer, void *data, int fd))
 {
-  wdr_hook_fd_callback(pointer, fd);
-  return WEECHAT_RC_OK;
-}
-
-void*
-wdc_hook_fd(int fd, const void* pointer)
-{
-  return weechat_hook_fd(fd, 1, 0, 0, hook_fd_callback, pointer, NULL);
+  return weechat_hook_fd(fd, 1, 0, 0, callback, pointer, NULL);
 }
 
 void
@@ -217,22 +191,14 @@ wdc_hdata_string(void* hdata, void* data, const char* name)
   return weechat_hdata_string(hdata, data, name);
 }
 
-static int
-wdc_hook_completion_callback(const void* pointer, void* data,
-                             const char* completion_item,
-                             struct t_gui_buffer* buffer,
-                             struct t_gui_completion* completion)
-{
-  wdr_hook_completion_callback(pointer, buffer, completion);
-  return WEECHAT_RC_OK;
-}
-
 void*
 wdc_hook_completion(const char* completion_item, const char* description,
-                    const void* callback_pointer)
+                    const void* callback_pointer,
+                    int (*callback)(const void*, void*, const char*,
+                                    struct t_gui_buffer*, struct t_gui_completion*))
 {
   return weechat_hook_completion(completion_item, description,
-                                 wdc_hook_completion_callback, callback_pointer,
+                                 callback, callback_pointer,
                                  NULL);
 }
 

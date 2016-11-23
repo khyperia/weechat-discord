@@ -12,6 +12,8 @@ fn main() {
         config.include(path);
     }
     config.file("src/weecord.c");
+    config.flag("-Wall");
+    config.flag("-Wextra");
     config.flag("-Werror");
     config.compile("libweecord.a");
 }

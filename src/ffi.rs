@@ -3,8 +3,6 @@ extern crate libc;
 use self::libc::{c_void, c_char, c_int, pipe2, O_NONBLOCK, read, write, close};
 use std::ffi::{CString, CStr};
 use std::panic::{UnwindSafe, catch_unwind};
-use discord::model::ChannelId;
-use {ConnectionState, run_command, input};
 
 pub struct Buffer {
     ptr: *mut c_void,
@@ -146,27 +144,25 @@ impl HDataGetResult for i32 {
     }
 }
 
-static mut global_state: *mut ConnectionState = 0 as *mut ConnectionState;
-
-fn get_global_state() -> Option<&'static mut ConnectionState> {
-    unsafe { global_state.as_mut() }
-}
-
-pub fn set_global_state(state: ConnectionState) {
-    unsafe {
-        global_state = Box::into_raw(Box::new(state));
-    }
-}
-
-fn drop_global_state() {
-    unsafe {
-        if global_state.is_null() {
-            return;
-        };
-        Box::from_raw(global_state);
-        global_state = 0 as *mut ConnectionState
-    };
-}
+// fn get_global_state() -> Option<&'static mut ConnectionState> {
+//     unsafe { global_state.as_mut() }
+// }
+// 
+// pub fn set_global_state(state: ConnectionState) {
+//     unsafe {
+//         global_state = Box::into_raw(Box::new(state));
+//     }
+// }
+// 
+// fn drop_global_state() {
+//     unsafe {
+//         if global_state.is_null() {
+//             return;
+//         };
+//         Box::from_raw(global_state);
+//         global_state = 0 as *mut ConnectionState
+//     };
+// }
 
 pub fn really_bad(message: String) -> ! {
     MAIN_BUFFER.print(&format!("{}: Internal error - {}", ::weechat::COMMAND, message));
@@ -174,15 +170,42 @@ pub fn really_bad(message: String) -> ! {
 }
 
 impl Buffer {
-    pub fn new(name: &str, channel: &ChannelId) -> Option<Buffer> {
+    pub fn new<F: Fn(Buffer, &str) + 'static>(name: &str, func: F) -> Option<Buffer> {
+        type CB = Fn(Buffer, &str);
         extern "C" {
-            fn wdc_buffer_new(name: *const c_char, data: *const c_char) -> *mut c_void;
+            fn wdc_buffer_new(name: *const c_char, pointer: *const c_void,
+                              input_callback: extern fn(*const c_void, *mut c_void, *mut c_void, *const c_char) -> c_int,
+                              close_callback: extern fn(*const c_void, *mut c_void, *mut c_void) -> c_int) -> *mut c_void;
+        }
+        extern fn input_cb(pointer: *const c_void, data: *mut c_void, buffer: *mut c_void, input_data: *const c_char) -> c_int {
+            let _ = data;
+            wrap_panic(|| {
+                let pointer = pointer as *const Box<CB>;
+                let buffer = Buffer { ptr: buffer };
+                let input_data = unsafe { CStr::from_ptr(input_data).to_str() };
+                let input_data = match input_data {
+                    Ok(x) => x,
+                    Err(_) => return,
+                };
+                (unsafe { &**pointer })(buffer, input_data);
+            });
+            0
+        }
+        extern fn close_cb(pointer: *const c_void, data: *mut c_void, buffer: *mut c_void) -> c_int {
+            let _ = buffer;
+            let _ = data;
+            wrap_panic(|| {
+                let pointer = pointer as *mut Box<CB>;
+                let func = unsafe { Box::from_raw(pointer) };
+                let _ = func;
+            });
+            0
         }
         unsafe {
             let name = unwrap1!(CString::new(name));
-            let id = format!("{}", channel.0);
-            let id = unwrap1!(CString::new(id));
-            let result = wdc_buffer_new(name.as_ptr(), id.as_ptr());
+            let pointer: Box<Box<CB>> = Box::new(Box::new(func));
+            let pointer = Box::into_raw(pointer) as *mut c_void;
+            let result = wdc_buffer_new(name.as_ptr(), pointer, input_cb, close_cb);
             if result.is_null() {
                 None
             } else {
@@ -301,7 +324,7 @@ impl WeechatObject for Buffer {
 pub struct PokeableFd {
     _hook: Hook,
     pipe: [c_int; 2],
-    _callback: Box<fn(&'static mut ConnectionState)>,
+    _callback: Box<Box<Fn()>>,
 }
 
 pub struct PokeableFdPoker {
@@ -309,20 +332,37 @@ pub struct PokeableFdPoker {
 }
 
 impl PokeableFd {
-    pub fn new(callback: Box<fn(&'static mut ConnectionState)>) -> PokeableFd {
+    pub fn new<F: Fn() + 'static>(callback: F) -> PokeableFd {
         extern "C" {
-            fn wdc_hook_fd(fd: c_int, pointer: *const c_void) -> *mut c_void;
+            fn wdc_hook_fd(fd: c_int, pointer: *const c_void,
+                           callback: extern fn(*const c_void, *mut c_void, c_int) -> c_int
+                           ) -> *mut c_void;
+        }
+        extern fn callback_fn(pointer: *const c_void, data: *mut c_void, fd: c_int) -> c_int {
+            let _ = data;
+            let mut tmp = 0 as c_char;
+            unsafe {
+                while read(fd, (&mut tmp) as *mut c_char as *mut c_void, 1) == 1 {
+                }
+            }
+            wrap_panic(|| {
+                let callback = pointer as *const Box<Fn()>;
+                (unsafe { &**callback })();
+            });
+            0
         }
         let mut pipe = [0; 2];
         unsafe { pipe2(&mut pipe[0] as *mut c_int, O_NONBLOCK) };
+        let callback: Box<Box<Fn()>> = Box::new(Box::new(callback));
         let hook = unsafe {
             // haha screw you borrowck
-            let callback = &*callback as *const fn(&'static mut ConnectionState) as *const c_void;
-            wdc_hook_fd(pipe[0], callback)
+            let callback = &*callback as *const _ as *const c_void;
+            let hook = wdc_hook_fd(pipe[0], callback, callback_fn);
+            Hook { ptr: hook }
         };
         // TODO: Check if hook is nil
         PokeableFd {
-            _hook: Hook { ptr: hook },
+            _hook: hook,
             pipe: pipe,
             _callback: callback,
         }
@@ -370,77 +410,58 @@ fn wrap_panic<F: FnOnce() -> () + UnwindSafe>(f: F) -> () {
 
 #[no_mangle]
 pub extern "C" fn wdr_end() {
-    wrap_panic(drop_global_state);
+    // wrap_panic(drop_global_state);
 }
 
 #[no_mangle]
 pub extern "C" fn wdr_init() {
+    // TODO
     wrap_panic(::init);
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn wdr_input(buffer: *mut c_void,
-                                   channel_id: *const c_char,
-                                   input_str: *const c_char) {
-    wrap_panic(|| {
-        let buffer = Buffer { ptr: buffer };
-        let channel_id = ChannelId(unwrap1!(unwrap1!(CStr::from_ptr(channel_id).to_str()).parse()));
-        let input_str = unwrap1!(CStr::from_ptr(input_str).to_str());
-        let state = get_global_state();
-        input(state, buffer, channel_id, input_str.into());
-    });
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wdr_command(buffer_c: *mut c_void, command_c: *const c_char) {
-    wrap_panic(|| {
-        let buffer = Buffer { ptr: buffer_c };
-        let state = get_global_state();
-        let command = unwrap1!(CStr::from_ptr(command_c).to_str());
-        if !run_command(buffer, state, command) {
-            drop_global_state();
-        }
-    });
-}
-
-#[no_mangle]
-pub extern "C" fn wdr_hook_fd_callback(callback: *const c_void, fd: c_int) {
-    wrap_panic(|| {
-        let func = unsafe {
-            let mut tmp = 0 as c_char;
-            while read(fd, (&mut tmp) as *mut c_char as *mut c_void, 1) == 1 {
-            }
-            &*(callback as *const fn(&'static mut ConnectionState))
-        };
-        let state = unwrap!(get_global_state());
-        func(state);
-    });
-}
-
-#[no_mangle]
-pub extern "C" fn wdr_hook_completion_callback(callback: *const c_void,
-                                               buffer: *mut c_void,
-                                               completion: *mut c_void) {
-    wrap_panic(|| {
-        let func = unsafe {
-            let callback_typed =
-                callback as *const fn(&'static mut ConnectionState, Buffer, Completion);
-            &*callback_typed
-        };
-        let state = unwrap!(get_global_state());
-        let buffer = Buffer { ptr: buffer };
-        let completion = Completion { ptr: completion };
-        func(state, buffer, completion);
-    });
-}
-
-pub fn hook_command(cmd: &str, desc: &str, args: &str, argdesc: &str, compl: &str) {
+pub fn hook_command<F: FnMut(Buffer, &str) + 'static>(cmd: &str, desc: &str, args: &str, argdesc: &str, compl: &str,
+                                                   func: F) -> Option<Hook> {
+    type CB = FnMut(Buffer, &str);
     extern "C" {
         fn wdc_hook_command(command: *const c_char,
                             description: *const c_char,
                             args: *const c_char,
                             args_description: *const c_char,
-                            completion: *const c_char);
+                            completion: *const c_char,
+                            pointer: *const c_void,
+                            callback: extern fn(
+                                *const c_void,
+                                *mut c_void,
+                                *mut c_void,
+                                c_int,
+                                *mut *mut c_char,
+                                *mut *mut c_char) -> c_int
+                            ) -> *mut c_void;
+    }
+    extern fn callback(pointer: *const c_void,
+                       data: *mut c_void,
+                       buffer: *mut c_void,
+                       argc: c_int,
+                       argv: *mut *mut c_char,
+                       argv_eol: *mut *mut c_char) -> c_int {
+        let _ = data;
+        let _ = argv;
+        wrap_panic(|| {
+            let pointer = pointer as *mut Box<CB>;
+            let buffer = Buffer { ptr: buffer };
+            if argc <= 1 {
+                (unsafe { &mut **pointer })(buffer, "");
+                return;
+            }
+            let args = unsafe { *argv_eol.offset(1) };
+            let args = unsafe { CStr::from_ptr(args).to_str() };
+            let args = match args {
+                Ok(x) => x,
+                Err(_) => return,
+            };
+            (unsafe { &mut **pointer })(buffer, args);
+        });
+        0
     }
     unsafe {
         let cmd = unwrap1!(CString::new(cmd));
@@ -448,11 +469,20 @@ pub fn hook_command(cmd: &str, desc: &str, args: &str, argdesc: &str, compl: &st
         let args = unwrap1!(CString::new(args));
         let argdesc = unwrap1!(CString::new(argdesc));
         let compl = unwrap1!(CString::new(compl));
-        wdc_hook_command(cmd.as_ptr(),
+        let pointer: Box<Box<CB>> = Box::new(Box::new(func));
+        let pointer = Box::into_raw(pointer) as *const c_void; // TODO: Memory leak here.
+        let hook = wdc_hook_command(cmd.as_ptr(),
                          desc.as_ptr(),
                          args.as_ptr(),
                          argdesc.as_ptr(),
-                         compl.as_ptr());
+                         compl.as_ptr(),
+                         pointer,
+                         callback);
+        if hook.is_null() {
+            None
+        } else {
+            Some(Hook { ptr: hook })
+        }
     }
 }
 
@@ -598,22 +628,42 @@ pub fn set_option(name: &str, value: &str) -> String {
     }
 }
 
-pub fn hook_completion(name: &str,
-                       description: &str,
-                       callback: &'static fn(&'static mut ConnectionState, Buffer, Completion))
+pub fn hook_completion<F: Fn(Buffer, Completion) + 'static>(name: &str,
+                       description: &str, callback: F)
                        -> Option<Hook> {
+    type CB = Fn(Buffer, Completion);
     extern "C" {
+        // int (*callback)(const void*, void*, const char*
+           //                         struct t_gui_buffer*, struct t_gui_completion*))
         fn wdc_hook_completion(completion_item: *const c_char,
                                description: *const c_char,
-                               callback_pointer: *const c_void)
-                               -> *mut c_void;
+                               callback_pointer: *const c_void,
+                               callback: extern fn(
+                                   *const c_void,
+                                   *mut c_void,
+                                   *const c_char,
+                                   *mut c_void,
+                                   *mut c_void) -> c_int
+                               ) -> *mut c_void;
     }
+    extern fn callback_func(pointer: *const c_void, data: *mut c_void, completion_item: *const c_char, buffer: *mut c_void,
+                       completion: *mut c_void) -> c_int {
+        let _ = data;
+        let _ = completion_item;
+        wrap_panic(|| {
+            let buffer = Buffer { ptr: buffer };
+            let completion = Completion { ptr: completion };
+            let pointer = pointer as *const Box<CB>;
+            (unsafe { &**pointer })(buffer, completion);
+        });
+        0
+    }
+    let callback: Box<Box<CB>> = Box::new(Box::new(callback));
     unsafe {
         let name_c = unwrap1!(CString::new(name));
         let description_c = unwrap1!(CString::new(description));
-        let callback_ptr = callback as *const fn(&'static mut ConnectionState, Buffer, Completion);
-        let callback_c = callback_ptr as *const c_void;
-        let result = wdc_hook_completion(name_c.as_ptr(), description_c.as_ptr(), callback_c);
+        let callback = Box::into_raw(callback) as *const _ as *const c_void; // TODO: Memory leak
+        let result = wdc_hook_completion(name_c.as_ptr(), description_c.as_ptr(), callback, callback_func);
         if result.is_null() {
             None
         } else {
