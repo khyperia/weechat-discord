@@ -264,7 +264,7 @@ impl Name for LiveServer {
 
 impl Name for Role {
     fn name_internal(&self) -> (&str, &str) {
-        ("", &self.name)
+        ("@", &self.name)
     }
 }
 

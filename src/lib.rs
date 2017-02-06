@@ -36,21 +36,18 @@ Check it out at https://github.com/khyperia/weechat-discord";
     pub const ARGS: &'static str = "\
                      connect
                      disconnect
-                     email <email>
-                     password <password>";
+                     token <token>";
     pub const ARGDESC: &'static str = "\
    connect: sign in to discord and open chat buffers
 disconnect: sign out of Discord and close chat buffers
-     email: set Discord login email
-  password: set Discord login password
+     token: set Discord login token
 
 Example:
-  /discord email your.email@example.com
-  /discord password yourpassword
+  /discord token 123456789ABCDEF
   /discord connect
 
 ";
-    pub const COMPLETIONS: &'static str = "connect || disconnect || email || password";
+    pub const COMPLETIONS: &'static str = "connect || disconnect || token";
 }
 
 pub struct ConnectionState {
@@ -84,21 +81,16 @@ fn user_set_option(name: &str, value: &str) {
 }
 
 fn connect() -> Option<Rc<RefCell<ConnectionState>>> {
-    let (email, password) = match (ffi::get_option("email"), ffi::get_option("password")) {
-        (Some(e), Some(p)) => (e, p),
-        (email, password) => {
-            MAIN_BUFFER.print("Error: plugins.var.weecord.{email,password} unset. Run:");
-            if email.is_none() {
-                MAIN_BUFFER.print("/discord email your.email@example.com");
-            }
-            if password.is_none() {
-                MAIN_BUFFER.print("/discord password hunter2");
-            }
+    let token = match ffi::get_option("token") {
+        Some(t) => t,
+        _ => {
+            MAIN_BUFFER.print("Error: plugins.var.weecord.token unset. Run:");
+            MAIN_BUFFER.print("/discord token 123456789ABCDEF");
             return None;
         }
     };
     command_print("connecting");
-    let discord = match Discord::new(&email, &password) {
+    let discord = match Discord::from_user_token(&token) {
         Ok(discord) => discord,
         Err(err) => {
             command_print(&format!("Login error: {}", err));
@@ -186,10 +178,8 @@ fn run_command(buffer: Buffer, state: &mut Option<Rc<RefCell<ConnectionState>>>,
     } else if command == "disconnect" {
         *state = None;
         command_print("disconnected");
-    } else if command.starts_with("email ") {
-        user_set_option("email", &command["email ".len()..]);
-    } else if command.starts_with("password ") {
-        user_set_option("password", &command["password ".len()..]);
+    } else if command.starts_with("token ") {
+        user_set_option("token", &command["token ".len()..]);
     } else {
         command_print("unknown command");
     }
@@ -197,7 +187,7 @@ fn run_command(buffer: Buffer, state: &mut Option<Rc<RefCell<ConnectionState>>>,
 
 fn input(state: &ConnectionState, buffer: Buffer, channel_id: ChannelId, message: &str) {
     let message = replace_mentions_send(&state.state, channel_id, message.into());
-    let result = state.discord.send_message(&channel_id, &message, "", false);
+    let result = state.discord.send_message(channel_id, &message, "", false);
     match result {
         Ok(_) => (),
         Err(err) => buffer.print(&format!("Discord: error sending message - {}", err)),
@@ -257,7 +247,7 @@ fn process_event(state: &Rc<RefCell<ConnectionState>>, event: &Event) {
         }
         Event::MessageCreate(ref message) => {
             let is_self = is_self_mentioned(&*state.borrow(),
-                                            &message.channel_id,
+                                            message.channel_id,
                                             message.mention_everyone,
                                             Some(&message.mentions),
                                             Some(&message.mention_roles));
@@ -281,7 +271,7 @@ fn process_event(state: &Rc<RefCell<ConnectionState>>, event: &Event) {
                                ref attachments,
                                .. } => {
             let is_self = is_self_mentioned(&*state.borrow(),
-                                            &channel_id,
+                                            channel_id,
                                             mention_everyone.unwrap_or(false),
                                             mentions.as_ref(),
                                             mention_roles.as_ref());
@@ -441,7 +431,7 @@ impl Buffer {
 fn get_buffer(state: &Rc<RefCell<ConnectionState>>, channel_id: ChannelId) -> Option<Buffer> {
     let (buffer_id, buffer_name) = {
         let state = state.borrow();
-        let channel = try_opt!(state.state.find_channel(&channel_id));
+        let channel = try_opt!(state.state.find_channel(channel_id));
         let server = if let ChannelRef::Public(srv, ch) = channel {
             if ch.kind != ChannelType::Text {
                 return None;
@@ -483,7 +473,7 @@ fn get_buffer(state: &Rc<RefCell<ConnectionState>>, channel_id: ChannelId) -> Op
 }
 
 fn is_self_mentioned(state: &ConnectionState,
-                     channel_id: &ChannelId,
+                     channel_id: ChannelId,
                      mention_everyone: bool,
                      mentions: Option<&Vec<User>>,
                      roles: Option<&Vec<RoleId>>)
@@ -538,7 +528,7 @@ fn all_names(chan_ref: &ChannelRef) -> Vec<User> {
 }
 
 fn replace_mentions_send<'a>(state: &State, channel_id: ChannelId, mut content: Cow<'a, str>) -> Cow<'a, str> {
-    let channel = match state.find_channel(&channel_id) {
+    let channel = match state.find_channel(channel_id) {
         Some(channel) => channel,
         None => return content,
     };
@@ -560,7 +550,7 @@ fn replace_mentions(state: &State, channel_id: ChannelId, content: &str) -> Stri
     lazy_static! {
         static ref RE: Regex = Regex::new(r"<(?P<type>@|@!|@&|#)(?P<id>\d+)>").unwrap();
     }
-    let channel = match state.find_channel(&channel_id) {
+    let channel = match state.find_channel(channel_id) {
         Some(ch) => ch,
         None => return content.into(),
     };
@@ -653,7 +643,7 @@ fn display(state: &Rc<RefCell<ConnectionState>>,
            no_highlight: bool) {
     let (is_private, temp) = {
         let state = state.borrow();
-        let channel = state.state.find_channel(&channel_id);
+        let channel = state.state.find_channel(channel_id);
         let is_private = if let Some(ChannelRef::Private(_)) = channel { true } else { false };
         if let Some(ChannelRef::Public(server, _)) = channel {
             if let Some(author) = author {

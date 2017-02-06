@@ -1,6 +1,9 @@
 #include <weechat-plugin.h>
 
+// no idea why this exploded in the past
+#ifndef NULL
 #define NULL ((void*)0)
+#endif
 
 void wdr_init(void);
 void wdr_end(void);

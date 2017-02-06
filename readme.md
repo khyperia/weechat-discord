@@ -22,10 +22,12 @@ Maybe important note: The previous version of this project, written in Go, used 
 
 ### Using
 
-Right now, due to it being a work in progress, things aren't fully fleshed out yet.
+Due to some idiocracy on Discord's part, [you will need to obtain a login token](https://github.com/hammerandchisel/discord-api-docs/issues/69#issuecomment-223886862). The wonderful tip by the Discord devs on how to do that, though, doesn't work: for me, and only for chromium, I went into inspector (ctrl+shift+i, because Discord *also* decided to do the *wonderful* thing of ripping out right-click menus), Application tab, Local Storage on left, discordapp.com, token entry.
 
-    /discord email your.email@example.com
-    /discord password yourpassword
+Set that token with
+
+    /discord token 123456789ABCDEF
+
+Then, connect with
+
     /discord connect
-
-(exact syntax of commands subject to change)
