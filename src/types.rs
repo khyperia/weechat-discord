@@ -216,66 +216,68 @@ impl NameFormat {
 
 pub trait Name: Id {
     // (prefix, raw_name)
-    fn name_internal(&self) -> (&str, &str);
+    fn name_internal(&self) -> (&'static str, Cow<str>);
     fn name(&self, fmt: &NameFormat) -> String {
         let (prefix, raw_name) = self.name_internal();
         let rename = get_rename_option(self.id());
-        let name: Cow<str> = rename.map(|x| x.into()).unwrap_or(raw_name.into());
+        let name: Cow<str> = rename.map_or(raw_name, |x| x.into());
         fmt.format(prefix, &name)
     }
 }
 
 impl Name for User {
-    fn name_internal(&self) -> (&str, &str) {
-        ("@", &self.name)
+    fn name_internal(&self) -> (&'static str, Cow<str>) {
+        ("@", Cow::Borrowed(&*self.name))
     }
 }
 
 impl Name for Member {
     // self.nick or self.user.name()
-    fn name_internal(&self) -> (&str, &str) {
-        self.nick.as_ref().map(|n| ("@", &**n)).unwrap_or(self.user.name_internal())
+    fn name_internal(&self) -> (&'static str, Cow<str>) {
+        self.nick.as_ref().map_or_else(|| self.user.name_internal(), |n| ("@", Cow::Borrowed(&**n)))
     }
 }
 
 impl Name for CurrentUser {
-    fn name_internal(&self) -> (&str, &str) {
-        ("@", &self.username)
+    fn name_internal(&self) -> (&'static str, Cow<str>) {
+        ("@", Cow::Borrowed(&self.username))
     }
 }
 
 impl Name for PublicChannel {
-    fn name_internal(&self) -> (&str, &str) {
-        ("#", &self.name)
+    fn name_internal(&self) -> (&'static str, Cow<str>) {
+        ("#", Cow::Borrowed(&self.name))
     }
 }
 
 impl Name for PrivateChannel {
-    fn name_internal(&self) -> (&str, &str) {
+    fn name_internal(&self) -> (&'static str, Cow<str>) {
         self.recipient.name_internal()
     }
 }
 
 impl Name for LiveServer {
-    fn name_internal(&self) -> (&str, &str) {
-        ("", &self.name)
+    fn name_internal(&self) -> (&'static str, Cow<str>) {
+        ("", Cow::Borrowed(&self.name))
     }
 }
 
 impl Name for Role {
-    fn name_internal(&self) -> (&str, &str) {
-        ("@", &self.name)
+    fn name_internal(&self) -> (&'static str, Cow<str>) {
+        ("@", Cow::Borrowed(&self.name))
     }
 }
 
+static MAX_GROUP_LEN: usize = 16;
+
 impl Name for Group {
-    fn name_internal(&self) -> (&str, &str) {
-        ("", self.name.as_ref().map_or("<Group>", |name| name))
+    fn name_internal(&self) -> (&'static str, Cow<str>) {
+        ("&", Cow::Owned(self.name().chars().take(MAX_GROUP_LEN).collect()))
     }
 }
 
 impl Name for Channel {
-    fn name_internal(&self) -> (&str, &str) {
+    fn name_internal(&self) -> (&'static str, Cow<str>) {
         match *self {
             Channel::Private(ref ch) => ch.name_internal(),
             Channel::Group(ref ch) => ch.name_internal(),
@@ -285,7 +287,7 @@ impl Name for Channel {
 }
 
 impl<'a> Name for ChannelRef<'a> {
-    fn name_internal(&self) -> (&str, &str) {
+    fn name_internal(&self) -> (&'static str, Cow<str>) {
         match *self {
             ChannelRef::Public(_, chan) => chan.name_internal(),
             ChannelRef::Group(chan) => chan.name_internal(),

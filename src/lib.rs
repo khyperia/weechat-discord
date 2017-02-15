@@ -573,12 +573,10 @@ fn replace_mentions(state: &State, channel_id: ChannelId, content: &str) -> Stri
                     }
                     ChannelRef::Public(server, _) => {
                         match mention_type {
-                            "@" => {
-                                find_name(server.members.iter().map(|x| &x.user),
-                                          UserId(id),
-                                          &format)
-                            }
-                            "@!" => find_name(server.members.iter(), UserId(id), &format),
+                            "@" => find_name(server.members.iter().map(|x| &x.user), UserId(id), &format),
+                            // "@!" => find_name(server.members.iter(), UserId(id), &format),
+                            // Use username instead of nickname (above line is nickname)
+                            "@!" => find_name(server.members.iter().map(|x| &x.user), UserId(id), &format),
                             "@&" => find_name(server.roles.iter(), RoleId(id), &format),
                             "#" => find_name(server.channels.iter(), ChannelId(id), &format),
                             _ => None,

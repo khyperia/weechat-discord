@@ -31,3 +31,10 @@ Set that token with
 Then, connect with
 
     /discord connect
+
+Note you may also have to adjust a few settings for best use:
+
+    weechat.completion.default_template -> append "|%(weecord_completion)"
+    weechat.bar.status.items -> replace buffer_name with buffer_short_name
+    plugins.var.python.go.short_name -> on (if you use go.py)
+    buffers.look.short_names -> on (if you use buffers.pl)
