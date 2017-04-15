@@ -1,7 +1,7 @@
 Weechat Discord
 ===============
 
-Currently a work in progress. I deeply apologize to anyone who may stumble upon this repository in hopes of finding an elusive weechat-discord bridge before it is finished, or worse, stumble upon it and find it abandoned.
+Currently a work in progress. Me and a couple friends use it daily, so it's usable, but may have the occasional bug.
 
 ### Building
 
@@ -24,11 +24,11 @@ Maybe important note: The previous version of this project, written in Go, used 
 
 Due to some idiocracy on Discord's part, [you will need to obtain a login token](https://github.com/hammerandchisel/discord-api-docs/issues/69#issuecomment-223886862). The wonderful tip by the Discord devs on how to do that, though, doesn't work: for me, and only for chromium, I went into inspector (ctrl+shift+i, because Discord *also* decided to do the *wonderful* thing of ripping out right-click menus), Application tab, Local Storage on left, discordapp.com, token entry.
 
-Set that token with
+Set that token (make sure to remove the quotes if you copied them in!):
 
     /discord token 123456789ABCDEF
 
-Then, connect with
+Then, connect:
 
     /discord connect
 

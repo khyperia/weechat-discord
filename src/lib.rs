@@ -1,7 +1,4 @@
 extern crate discord;
-extern crate regex;
-#[macro_use]
-extern crate lazy_static;
 
 #[macro_use]
 mod macros;
@@ -18,14 +15,13 @@ use std::rc::Rc;
 use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::thread::spawn;
 
-use discord::model::{Event, ChannelType, User, LiveServer, PossibleServer, OnlineStatus,
-                     Attachment, UserId, RoleId, ServerId, ChannelId, MessageId};
+use discord::model::{Event, ChannelType, User, LiveServer, PossibleServer, Attachment, RoleId,
+                     ServerId, ChannelId, MessageId};
 use discord::{Discord, State, ChannelRef, GetMessages};
 
 use ffi::{Buffer, MAIN_BUFFER, Hook, Completion, PokeableFd, WeechatObject};
-use types::{Name, Id, DiscordId, NameFormat};
+use types::{Name, Id, NameFormat};
 use util::ServerExt;
-use regex::Regex;
 
 mod weechat {
     pub const COMMAND: &'static str = "discord";
@@ -63,12 +59,11 @@ pub struct ConnectionState {
 pub fn init() {
     let mut state = Box::new(None);
     let hook = ffi::hook_command(weechat::COMMAND,
-                      weechat::DESCRIPTION,
-                      weechat::ARGS,
-                      weechat::ARGDESC,
-                      weechat::COMPLETIONS, move |buffer, input| {
-                          run_command(buffer, state.as_mut(), input)
-                      });
+                                 weechat::DESCRIPTION,
+                                 weechat::ARGS,
+                                 weechat::ARGDESC,
+                                 weechat::COMPLETIONS,
+                                 move |buffer, input| run_command(buffer, state.as_mut(), input));
     ::std::mem::forget(hook); // TODO: Memory leak here.
 }
 
@@ -119,11 +114,12 @@ fn connect() -> Option<Rc<RefCell<ConnectionState>>> {
     let state = Rc::new(RefCell::new(state));
 
     let state_comp = Rc::downgrade(&state);
-    let completion_hook = ffi::hook_completion("weecord_completion", "", move |buffer, completion| {
-        if let Some(state) = state_comp.upgrade() {
-            do_completion(&*state.borrow(), buffer, completion)
-        };
-    });
+    let completion_hook =
+        ffi::hook_completion("weecord_completion", "", move |buffer, completion| {
+            if let Some(state) = state_comp.upgrade() {
+                do_completion(&*state.borrow(), buffer, completion)
+            };
+        });
     let completion_hook = match completion_hook {
         Some(hook) => hook,
         None => {
@@ -133,11 +129,9 @@ fn connect() -> Option<Rc<RefCell<ConnectionState>>> {
     };
 
     let state_pipe = Rc::downgrade(&state);
-    let pipe = PokeableFd::new(move || {
-        if let Some(mut state) = state_pipe.upgrade() {
-            process_events(&mut state);
-        }
-    });
+    let pipe = PokeableFd::new(move || if let Some(mut state) = state_pipe.upgrade() {
+                                   process_events(&mut state);
+                               });
     let pipe_poker = pipe.get_poker();
 
     {
@@ -169,6 +163,19 @@ fn command_print(message: &str) {
     MAIN_BUFFER.print(&format!("{}: {}", &weechat::COMMAND, message));
 }
 
+fn debug_command(state: &ConnectionState, command: &str) {
+    if command == "replace" {
+        for server in state.state.servers() {
+            MAIN_BUFFER.print(&format!("Server: {}", &server.name));
+            if let Some(chan) = state.state.find_channel(server.channels[0].id) {
+                for (user, mention) in all_names(&chan, &NameFormat::prefix()) {
+                    MAIN_BUFFER.print(&format!("{} : {}", user, mention))
+                }
+            }
+        }
+    }
+}
+
 fn run_command(buffer: Buffer, state: &mut Option<Rc<RefCell<ConnectionState>>>, command: &str) {
     let _ = buffer;
     if command == "" {
@@ -180,6 +187,10 @@ fn run_command(buffer: Buffer, state: &mut Option<Rc<RefCell<ConnectionState>>>,
         command_print("disconnected");
     } else if command.starts_with("token ") {
         user_set_option("token", &command["token ".len()..]);
+    } else if command.starts_with("debug ") {
+        if let &mut Some(ref state) = state {
+            debug_command(&state.borrow(), &command["debug ".len()..]);
+        }
     } else {
         command_print("unknown command");
     }
@@ -187,7 +198,9 @@ fn run_command(buffer: Buffer, state: &mut Option<Rc<RefCell<ConnectionState>>>,
 
 fn input(state: &ConnectionState, buffer: Buffer, channel_id: ChannelId, message: &str) {
     let message = replace_mentions_send(&state.state, channel_id, message.into());
-    let result = state.discord.send_message(channel_id, &message, "", false);
+    let result = state
+        .discord
+        .send_message(channel_id, &message, "", false);
     match result {
         Ok(_) => (),
         Err(err) => buffer.print(&format!("Discord: error sending message - {}", err)),
@@ -234,12 +247,7 @@ fn process_event(state: &Rc<RefCell<ConnectionState>>, event: &Event) {
                     let buffer = get_buffer(state, channel.id());
                     if let Some(buffer) = buffer {
                         for member in &server.members {
-                            if let Some(presence) = server.find_presence(member.id()) {
-                                if presence.status == OnlineStatus::Online ||
-                                   presence.status == OnlineStatus::Idle {
-                                    buffer.add_nick(&member.user.name(&NameFormat::none()));
-                                }
-                            }
+                            buffer.add_nick(&member.user.name(&NameFormat::none()));
                         }
                     }
                 }
@@ -261,15 +269,17 @@ fn process_event(state: &Rc<RefCell<ConnectionState>>, event: &Event) {
                     is_self,
                     false)
         }
-        Event::MessageUpdate { id,
-                               channel_id,
-                               ref content,
-                               ref author,
-                               ref mention_everyone,
-                               ref mentions,
-                               ref mention_roles,
-                               ref attachments,
-                               .. } => {
+        Event::MessageUpdate {
+            id,
+            channel_id,
+            ref content,
+            ref author,
+            ref mention_everyone,
+            ref mentions,
+            ref mention_roles,
+            ref attachments,
+            ..
+        } => {
             let is_self = is_self_mentioned(&*state.borrow(),
                                             channel_id,
                                             mention_everyone.unwrap_or(false),
@@ -285,7 +295,10 @@ fn process_event(state: &Rc<RefCell<ConnectionState>>, event: &Event) {
                     is_self,
                     false)
         }
-        Event::MessageDelete { message_id, channel_id } => {
+        Event::MessageDelete {
+            message_id,
+            channel_id,
+        } => {
             display(state,
                     channel_id,
                     message_id,
@@ -304,14 +317,20 @@ fn process_event(state: &Rc<RefCell<ConnectionState>>, event: &Event) {
         Event::ServerMemberAdd(server_id, ref member) => {
             buffer_nicklist_update_id(state, server_id, &member.user, true)
         }
-        Event::ServerMemberUpdate { server_id, ref user, .. } => {
-            buffer_nicklist_update_id(state, server_id, user, true)
-        }
+        Event::ServerMemberUpdate {
+            server_id,
+            ref user,
+            ..
+        } => buffer_nicklist_update_id(state, server_id, user, true),
         Event::ServerMemberRemove(server_id, ref user) => {
             buffer_nicklist_update_id(state, server_id, user, false)
         }
         Event::ServerMembersChunk(server_id, ref members) |
-        Event::ServerSync { server_id, ref members, .. } => {
+        Event::ServerSync {
+            server_id,
+            ref members,
+            ..
+        } => {
             for member in members {
                 buffer_nicklist_update_id(state, server_id, &member.user, true);
             }
@@ -324,8 +343,6 @@ fn process_event(state: &Rc<RefCell<ConnectionState>>, event: &Event) {
         Event::PresenceUpdate { ref presence, .. } => {
             for server in state.borrow().state.servers() {
                 if let Some(user) = server.find_user(presence.user_id) {
-                    // let is_adding = presence.status == OnlineStatus::Online
-                    //   || presence.status == OnlineStatus::Idle;
                     let is_adding = true;
                     buffer_nicklist_update(state, server, user, is_adding);
                 }
@@ -404,7 +421,10 @@ fn do_completion(state: &ConnectionState, buffer: Buffer, mut completion: Comple
 
 impl Buffer {
     fn load_backlog(&self, state: &Rc<RefCell<ConnectionState>>, channel_id: ChannelId) {
-        let messages = state.borrow().discord.get_messages(channel_id, GetMessages::MostRecent, None);
+        let messages = state
+            .borrow()
+            .discord
+            .get_messages(channel_id, GetMessages::MostRecent, None);
         match messages {
             Ok(messages) => {
                 for message in messages.iter().rev() {
@@ -456,11 +476,11 @@ fn get_buffer(state: &Rc<RefCell<ConnectionState>>, channel_id: ChannelId) -> Op
         Some(buffer) => buffer,
         None => {
             let state_weak = Rc::downgrade(state);
-            let buffer = try_opt!(Buffer::new(&buffer_id, move |buffer, input_str| {
-                if let Some(state) = state_weak.upgrade() {
+            let buffer =
+                try_opt!(Buffer::new(&buffer_id, move |buffer, input_str| if let Some(state) =
+                    state_weak.upgrade() {
                     input(&*state.borrow(), buffer, channel_id, input_str);
-                }
-            }));
+                }));
             buffer.set("short_name", &buffer_name);
             buffer.set("title", "Channel Title");
             buffer.set("type", "formatted");
@@ -489,10 +509,13 @@ fn is_self_mentioned(state: &ConnectionState,
             }
         }
     }
-    let server = state.state.find_channel(channel_id).and_then(|channel| match channel {
-        ChannelRef::Public(server, _) => Some(server),
-        _ => None,
-    });
+    let server = state
+        .state
+        .find_channel(channel_id)
+        .and_then(|channel| match channel {
+                      ChannelRef::Public(server, _) => Some(server),
+                      _ => None,
+                  });
     if let (Some(roles), Some(server)) = (roles, server) {
         for role in roles {
             for member in &server.members {
@@ -509,89 +532,69 @@ fn is_self_mentioned(state: &ConnectionState,
     false
 }
 
-fn find_name<'a, SearchId: DiscordId, T: 'a + Name<SelfId = SearchId>, I: Iterator<Item = &'a T>>
-    (items: I,
-     id: SearchId,
-     format: &NameFormat)
-     -> Option<String> {
-    items.into_iter()
-        .find(|item| item.id() == id)
-        .map(|item| item.name(format))
-}
-
-fn all_names(chan_ref: &ChannelRef) -> Vec<User> {
+fn all_names(chan_ref: &ChannelRef, format: &NameFormat) -> Vec<(String, String)> {
+    let mut names = Vec::new();
     match *chan_ref {
-        ChannelRef::Private(private) => vec![private.recipient.clone()],
-        ChannelRef::Group(group) => group.recipients.clone(),
-        ChannelRef::Public(public, _) => public.members.iter().map(|m| m.user.clone()).collect(),
+        ChannelRef::Private(private) => {
+            names.push((private.recipient.name(format), format!("{}", private.recipient.mention())))
+        }
+        ChannelRef::Group(group) => {
+            for recipient in &group.recipients {
+                names.push((recipient.name(format), format!("{}", recipient.mention())))
+            }
+        }
+        ChannelRef::Public(server, _) => {
+            for member in &server.members {
+                let mut mention = format!("{}", member.user.mention());
+                // order of push matters (stable sort for nick/user names the same)
+                names.push((member.user.name(format), mention.clone()));
+                mention.insert(2, '!');
+                names.push((member.name(format), mention));
+            }
+            for role in &server.roles {
+                names.push((role.name(format), format!("{}", role.mention())));
+            }
+            for chan in &server.channels {
+                names.push((chan.name(format), format!("{}", chan.mention())));
+            }
+        }
     }
+    // sort by descending length order. Rust sort is stable sort.
+    names.sort_by(|&(ref a, _), &(ref b, _)| b.len().cmp(&a.len()));
+    names
 }
 
-fn replace_mentions_send<'a>(state: &State, channel_id: ChannelId, mut content: Cow<'a, str>) -> Cow<'a, str> {
+fn replace_mentions_send<'a>(state: &State,
+                             channel_id: ChannelId,
+                             mut content: Cow<'a, str>)
+                             -> Cow<'a, str> {
     let channel = match state.find_channel(channel_id) {
         Some(channel) => channel,
         None => return content,
     };
-    let mut names = all_names(&channel)
-        .into_iter()
-        .map(|user| (user.name(&NameFormat::prefix()), user.mention()))
-        .collect::<Vec<_>>();
-    // sort by descending length order
-    names.sort_by(|&(ref a, _), &(ref b, _)| b.len().cmp(&a.len()));
-    for &(ref name, ref mention) in &names {
+    for (name, mention) in all_names(&channel, &NameFormat::prefix()) {
         if content.contains(&*name) {
-            content = content.into_owned().replace(&*name, &format!("{}", mention)).into();
+            content = content
+                .into_owned()
+                .replace(&*name, &format!("{}", mention))
+                .into();
         }
     }
     content
 }
 
-fn replace_mentions(state: &State, channel_id: ChannelId, content: &str) -> String {
-    lazy_static! {
-        static ref RE: Regex = Regex::new(r"<(?P<type>@|@!|@&|#)(?P<id>\d+)>").unwrap();
-    }
+fn replace_mentions(state: &State, channel_id: ChannelId, mut content: String) -> String {
     let channel = match state.find_channel(channel_id) {
         Some(ch) => ch,
         None => return content.into(),
     };
-    let format = NameFormat::color_prefix();
-    RE.replace_all(content, |captures: &regex::Captures| {
-        let mention_type = unwrap!(captures.name("type"));
-        let id = unwrap!(captures.name("id"));
-        id.parse::<u64>()
-            .ok()
-            .and_then(|id| {
-                match channel {
-                    ChannelRef::Private(private) => {
-                        if private.recipient.id() == UserId(id) {
-                            Some(private.recipient.name(&format))
-                        } else if state.user().id() == UserId(id) {
-                            Some(state.user().name(&format))
-                        } else {
-                            None
-                        }
-                    }
-                    ChannelRef::Public(server, _) => {
-                        match mention_type {
-                            "@" => find_name(server.members.iter().map(|x| &x.user), UserId(id), &format),
-                            // "@!" => find_name(server.members.iter(), UserId(id), &format),
-                            // Use username instead of nickname (above line is nickname)
-                            "@!" => find_name(server.members.iter().map(|x| &x.user), UserId(id), &format),
-                            "@&" => find_name(server.roles.iter(), RoleId(id), &format),
-                            "#" => find_name(server.channels.iter(), ChannelId(id), &format),
-                            _ => None,
-                        }
-                    }
-                    ChannelRef::Group(group) => {
-                        match mention_type {
-                            "@" | "@!" => find_name(group.recipients.iter(), UserId(id), &format),
-                            _ => None,
-                        }
-                    }
-                }
-            })
-            .unwrap_or(captures.at(0).expect("Regex had no capture group 0").into())
-    })
+    for (name, mention) in all_names(&channel, &NameFormat::color_prefix()) {
+        // check contains to reduce allocations
+        if content.contains(&mention) {
+            content = content.replace(&mention, &name);
+        }
+    }
+    content
 }
 
 fn find_tag<T, F: Fn(String) -> Option<T>>(line_data: &ffi::WeechatAny, pred: F) -> Option<T> {
@@ -642,7 +645,11 @@ fn display(state: &Rc<RefCell<ConnectionState>>,
     let (is_private, temp) = {
         let state = state.borrow();
         let channel = state.state.find_channel(channel_id);
-        let is_private = if let Some(ChannelRef::Private(_)) = channel { true } else { false };
+        let is_private = if let Some(ChannelRef::Private(_)) = channel {
+            true
+        } else {
+            false
+        };
         if let Some(ChannelRef::Public(server, _)) = channel {
             if let Some(author) = author {
                 (is_private, Some((server.clone(), author.clone())))
@@ -708,15 +715,21 @@ fn display(state: &Rc<RefCell<ConnectionState>>,
     tags.push(format!("nick_{}", author));
     tags.push(format!("discord_messageid_{}", message_id.0));
     let tags = tags.join(",".into());
-    let content = replace_mentions(&state.borrow().state, channel_id, &content);
+    let content = replace_mentions(&state.borrow().state, channel_id, content);
     // first into_iter is the Option iterator
-    let attachments = attachments.into_iter()
-        .flat_map(|attachments| attachments.into_iter().map(|a| a.proxy_url.clone()));
+    let attachments =
+        attachments
+            .into_iter()
+            .flat_map(|attachments| attachments.into_iter().map(|a| a.proxy_url.clone()));
     let content = if content.is_empty() {
         None
     } else {
         Some(content)
     };
-    let content = content.into_iter().chain(attachments).collect::<Vec<_>>().join("\n");
+    let content = content
+        .into_iter()
+        .chain(attachments)
+        .collect::<Vec<_>>()
+        .join("\n");
     buffer.print_tags(&tags, &format!("{}\t{}{}", author, prefix, content));
 }

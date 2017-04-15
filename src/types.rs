@@ -234,7 +234,9 @@ impl Name for User {
 impl Name for Member {
     // self.nick or self.user.name()
     fn name_internal(&self) -> (&'static str, Cow<str>) {
-        self.nick.as_ref().map_or_else(|| self.user.name_internal(), |n| ("@", Cow::Borrowed(&**n)))
+        self.nick
+            .as_ref()
+            .map_or_else(|| self.user.name_internal(), |n| ("@", Cow::Borrowed(&**n)))
     }
 }
 

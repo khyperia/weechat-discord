@@ -38,15 +38,12 @@ struct t_hook*
 wdc_hook_command(const char* command, const char* description, const char* args,
                  const char* args_description, const char* completion,
                  const void* pointer,
-                 int (*callback)(const void *pointer,
-                    void *data,
-                    struct t_gui_buffer *buffer,
-                    int argc,
-                    char **argv,
-                    char **argv_eol))
+                 int (*callback)(const void* pointer, void* data,
+                                 struct t_gui_buffer* buffer, int argc,
+                                 char** argv, char** argv_eol))
 {
   return weechat_hook_command(command, description, args, args_description,
-                             completion, callback, pointer, NULL);
+                              completion, callback, pointer, NULL);
 }
 
 void
@@ -91,17 +88,15 @@ wdc_buffer_search(const char* name)
 }
 
 struct t_gui_buffer*
-wdc_buffer_new(const char* name,
-        const void *pointer,
-        int (*input_callback)(const void *pointer,
-            void *data,
-            struct t_gui_buffer *buffer,
-            const char *input_data),
-        int (*close_callback)(const void *pointer,
-            void *data,
-            struct t_gui_buffer *buffer))
+wdc_buffer_new(const char* name, const void* pointer,
+               int (*input_callback)(const void* pointer, void* data,
+                                     struct t_gui_buffer* buffer,
+                                     const char* input_data),
+               int (*close_callback)(const void* pointer, void* data,
+                                     struct t_gui_buffer* buffer))
 {
-  return weechat_buffer_new(name, input_callback, pointer, NULL, close_callback, pointer, NULL);
+  return weechat_buffer_new(name, input_callback, pointer, NULL, close_callback,
+                            pointer, NULL);
 }
 
 void
@@ -126,7 +121,7 @@ wdc_load_backlog(void* buffer)
 
 struct t_hook*
 wdc_hook_fd(int fd, const void* pointer,
-            int (*callback)(const void* pointer, void *data, int fd))
+            int (*callback)(const void* pointer, void* data, int fd))
 {
   return weechat_hook_fd(fd, 1, 0, 0, callback, pointer, NULL);
 }
@@ -198,11 +193,11 @@ void*
 wdc_hook_completion(const char* completion_item, const char* description,
                     const void* callback_pointer,
                     int (*callback)(const void*, void*, const char*,
-                                    struct t_gui_buffer*, struct t_gui_completion*))
+                                    struct t_gui_buffer*,
+                                    struct t_gui_completion*))
 {
-  return weechat_hook_completion(completion_item, description,
-                                 callback, callback_pointer,
-                                 NULL);
+  return weechat_hook_completion(completion_item, description, callback,
+                                 callback_pointer, NULL);
 }
 
 void
