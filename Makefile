@@ -30,5 +30,5 @@ $(testdir)/plugins: | $(testdir)
 	mkdir $@
 
 format:
-	cargo fmt
+	cargo fmt -- --write-mode=overwrite
 	clang-format -style=mozilla -i src/*.c

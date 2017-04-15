@@ -132,6 +132,13 @@ wdc_unhook(struct t_hook* hook)
   weechat_unhook(hook);
 }
 
+int
+wdc_nicklist_nick_exists(struct t_gui_buffer* buffer, const char* nick)
+{
+  struct t_gui_nick* gnick = weechat_nicklist_search_nick(buffer, NULL, nick);
+  return gnick != NULL;
+}
+
 void
 wdc_nicklist_add_nick(struct t_gui_buffer* buffer, const char* nick)
 {
