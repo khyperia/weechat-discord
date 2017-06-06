@@ -370,19 +370,23 @@ impl PokeableFd {
                        });
             0
         }
-        let mut pipe = [0; 2];
-        unsafe { pipe2(&mut pipe[0] as *mut c_int, O_NONBLOCK) };
+        let mut pipe_fds = [0; 2];
+        unsafe {
+            pipe(&mut pipe_fds[0] as *mut c_int);
+            // O_NONBLOCK is used in callback_fn while draining the pipe
+            fcntl(pipe_fds[0], F_SETFL, fcntl(pipe_fds[0], F_GETFL) | O_NONBLOCK);
+        }
         let callback: Box<Box<FnMut()>> = Box::new(Box::new(callback));
         let hook = unsafe {
             // haha screw you borrowck
             let callback = &*callback as *const _ as *const c_void;
-            let hook = wdc_hook_fd(pipe[0], callback, callback_fn);
+            let hook = wdc_hook_fd(pipe_fds[0], callback, callback_fn);
             Hook { ptr: hook }
         };
         // TODO: Check if hook is nil
         PokeableFd {
             _hook: hook,
-            pipe: pipe,
+            pipe: pipe_fds,
             _callback: callback,
         }
     }

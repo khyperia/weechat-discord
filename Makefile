@@ -5,16 +5,20 @@ ifeq ($(OPENSSL),1)
 	export OPENSSL_INCLUDE_DIR=/usr/include/openssl-1.0
 	export OPENSSL_LIB_DIR=/usr/lib/openssl-1.0
 endif
+ifeq ($(MAC),1)
+	export OPENSSL_INCLUDE_DIR=/usr/local/opt/openssl/include
+	export OPENSSL_LIB_DIR=/usr/local/opt/openssl/lib
+endif
 
 .PHONY: all install install_test test run format
 all: src/*
 	cargo build --release
 
 install: all | $(installdir)/plugins
-	cp target/release/libweecord.so $(installdir)/plugins
+	cp target/release/libweecord.* $(installdir)/plugins
 
 install_test: all | $(testdir)/plugins
-	cp target/release/libweecord.so $(testdir)/plugins
+	cp target/release/libweecord.* $(testdir)/plugins
 
 run: install
 	weechat -a
