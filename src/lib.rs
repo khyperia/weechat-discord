@@ -24,22 +24,28 @@ mod weechat {
     pub const DESCRIPTION: &'static str = "\
 Discord from the comfort of your favorite command-line IRC client!
 This plugin is a work in progress and could use your help.
-Check it out at https://github.com/khyperia/weechat-discord";
+Check it out at https://github.com/khyperia/weechat-discord
+
+Options used:
+
+plugins.var.weecord.token = <discord_token>
+plugins.var.weecord.on_delete.<server_id> = <channel_id>
+plugins.var.weecord.rename.<id> = <string>
+";
     pub const ARGS: &'static str = "\
                      connect
                      disconnect
                      token <token>";
     pub const ARGDESC: &'static str = "\
-   connect: sign in to discord and open chat buffers
+connect: sign in to discord and open chat buffers
 disconnect: sign out of Discord and close chat buffers
-     token: set Discord login token
+token: set Discord login token
 
 Example:
   /discord token 123456789ABCDEF
   /discord connect
-
 ";
-    pub const COMPLETIONS: &'static str = "connect || disconnect || token";
+    pub const COMPLETIONS: &'static str = "connect || disconnect || token || debug replace";
 }
 
 // Called when plugin is loaded in Weechat

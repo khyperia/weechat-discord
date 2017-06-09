@@ -1,5 +1,7 @@
+use discord::*;
 use discord::model::*;
 
+use ffi;
 use types::*;
 use connection::*;
 use message::*;
@@ -81,7 +83,10 @@ pub fn on_event(state: &RcState, sender: &OutgoingPipe, event: Event) {
                                          "DELETE: ",
                                          false,
                                          false);
-            message.map(|m| m.print());
+            message.map(|m| {
+                m.print();
+                on_delete(state, sender, channel_id, m);
+            });
         }
         Event::ServerCreate(PossibleServer::Online(_)) |
         Event::ServerMemberUpdate { .. } |
@@ -125,5 +130,23 @@ pub fn on_event(state: &RcState, sender: &OutgoingPipe, event: Event) {
         Event::ChannelPinsUpdate { .. } |
         Event::Unknown(_, _) |
         _ => (),
+    }
+}
+
+fn on_delete(state: &RcState, outgoing: &OutgoingPipe, source_chan: ChannelId, message: FormattedMessage) {
+    if let Some(ChannelRef::Public(server, _)) = state.read().unwrap().find_channel(source_chan) {
+        if let Some(dest_chan) = ffi::get_option(&format!("on_delete.{}", server.id.0))
+                            .and_then(|id| id.parse::<u64>().ok())
+                            .map(|id| ChannelId(id)) {
+            if state.read().unwrap().find_channel(dest_chan).is_none() {
+                return;
+            }
+            let message = format!("AUTO: Deleted message by {} in {}: {}", message.author, message.channel, message.content);
+            let result = outgoing.discord.send_message(dest_chan, &message, "", false);
+            match result {
+                Ok(_) => (),
+                Err(err) => ffi::MAIN_BUFFER.print(&format!("Failed to send on_delete message: {}", err)),
+            }
+        }
     }
 }

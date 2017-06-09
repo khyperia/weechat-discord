@@ -8,13 +8,16 @@ use connection::*;
 
 pub struct FormattedMessage {
     pub target: Buffer,
-    pub message: String,
+    pub channel: String,
+    pub author: String,
+    pub prefix: &'static str,
+    pub content: String,
     pub tags: String,
 }
 
 impl FormattedMessage {
     pub fn print(&self) {
-        self.target.print_tags(&self.tags, &self.message)
+        self.target.print_tags(&self.tags, &format!("{}\t{}{}", self.author, self.prefix, self.content))
     }
 }
 
@@ -240,10 +243,12 @@ pub fn format_message(state: &State,
         .chain(attachments)
         .collect::<Vec<_>>()
         .join("\n");
-    let message = format!("{}\t{}{}", author, prefix, content);
     Some(FormattedMessage {
              target: buffer,
-             message: message,
+             channel: channel_ref.name(&NameFormat::none()),
+             author: author,
+             prefix: prefix,
+             content: content,
              tags: tags,
          })
 }

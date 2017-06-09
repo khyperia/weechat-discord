@@ -16,7 +16,7 @@ pub type RcState = Rc<RwLock<State>>;
 
 #[derive(Clone)]
 pub struct OutgoingPipe {
-    discord: Rc<Discord>,
+    pub discord: Rc<Discord>,
 }
 
 pub fn buffer_name(channel: ChannelRef) -> (String, String) {
@@ -119,9 +119,9 @@ impl MyConnection {
                                            Ok(event) => event,
                                            Err(TryRecvError::Empty) => return,
                                            Err(TryRecvError::Disconnected) => {
-                command_print("Listening thread stopped!");
-                return;
-            }
+                                               command_print("Listening thread stopped!");
+                                               return;
+                                           }
                                        };
                                        let event = match event {
                                            Ok(event) => event,

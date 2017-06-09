@@ -1,12 +1,14 @@
 installdir=$(HOME)/.weechat
 testdir=./test_dir
 
-ifeq ($(OPENSSL),1)
+ifneq ($(wildcard /usr/include/openssl-1.0),)
 	export OPENSSL_INCLUDE_DIR=/usr/include/openssl-1.0
-	export OPENSSL_LIB_DIR=/usr/lib/openssl-1.0
-endif
-ifeq ($(MAC),1)
+else ifneq ($(wildcard /usr/local/opt/openssl/include),)
 	export OPENSSL_INCLUDE_DIR=/usr/local/opt/openssl/include
+endif
+ifneq ($(wildcard /usr/lib/openssl-1.0),)
+	export OPENSSL_LIB_DIR=/usr/lib/openssl-1.0
+else ifneq ($(wildcard /usr/local/opt/openssl/lib),)
 	export OPENSSL_LIB_DIR=/usr/local/opt/openssl/lib
 endif
 

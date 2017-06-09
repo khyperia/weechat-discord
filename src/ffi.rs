@@ -374,7 +374,9 @@ impl PokeableFd {
         unsafe {
             pipe(&mut pipe_fds[0] as *mut c_int);
             // O_NONBLOCK is used in callback_fn while draining the pipe
-            fcntl(pipe_fds[0], F_SETFL, fcntl(pipe_fds[0], F_GETFL) | O_NONBLOCK);
+            fcntl(pipe_fds[0],
+                  F_SETFL,
+                  fcntl(pipe_fds[0], F_GETFL) | O_NONBLOCK);
         }
         let callback: Box<Box<FnMut()>> = Box::new(Box::new(callback));
         let hook = unsafe {
@@ -423,8 +425,10 @@ fn wrap_panic<F: FnOnce() -> () + UnwindSafe>(f: F) -> () {
                 None => "unknown error",
             };
             let result = catch_unwind(|| {
-                                          MAIN_BUFFER.print(&format!(
-                    "{}: Fatal error (caught) - {}", ::weechat::COMMAND, msg))
+                                          MAIN_BUFFER
+                                              .print(&format!("{}: Fatal error (caught) - {}",
+                                                              ::weechat::COMMAND,
+                                                              msg))
                                       });
             let _ = result; // eat error without logging :(
         }
