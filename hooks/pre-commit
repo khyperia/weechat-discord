@@ -1,0 +1,10 @@
+#!/bin/sh
+cargo fmt -- --write-mode diff
+cargo_exit=$?
+clang-format -style=mozilla src/*.c -output-replacements-xml | grep -c "<replacement " >/dev/null
+clang_exit=$?
+if [ $clang_exit -ne 1 -o $cargo_exit -ne 0 ]
+then
+    echo "Formatting hook failed. Run 'make format'."
+    exit 1
+fi

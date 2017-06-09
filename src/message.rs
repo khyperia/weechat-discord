@@ -17,7 +17,9 @@ pub struct FormattedMessage {
 
 impl FormattedMessage {
     pub fn print(&self) {
-        self.target.print_tags(&self.tags, &format!("{}\t{}{}", self.author, self.prefix, self.content))
+        self.target
+            .print_tags(&self.tags,
+                        &format!("{}\t{}{}", self.author, self.prefix, self.content))
     }
 }
 

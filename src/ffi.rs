@@ -427,8 +427,8 @@ fn wrap_panic<F: FnOnce() -> () + UnwindSafe>(f: F) -> () {
             let result = catch_unwind(|| {
                                           MAIN_BUFFER
                                               .print(&format!("{}: Fatal error (caught) - {}",
-                                                              ::weechat::COMMAND,
-                                                              msg))
+                                                             ::weechat::COMMAND,
+                                                             msg))
                                       });
             let _ = result; // eat error without logging :(
         }
