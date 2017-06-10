@@ -237,3 +237,9 @@ wdc_hook_completion_add(void* t_gui_completion, const char* word)
   weechat_hook_completion_list_add(
     (struct t_gui_completion*)t_gui_completion, word, 0, WEECHAT_LIST_POS_SORT);
 }
+
+char*
+wdc_string_remove_color(const char* str)
+{
+  return weechat_string_remove_color(str, NULL);
+}

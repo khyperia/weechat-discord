@@ -136,22 +136,23 @@ fn find_tag<T, F: Fn(String) -> Option<T>>(line_data: &ffi::WeechatAny, pred: F)
 // returns: (Prefix, Message)
 fn find_old_msg(buffer: &Buffer, message_id: &MessageId) -> Option<(String, String)> {
     let searchterm = format!("discord_messageid_{}", message_id.0);
-    let mut line = unwrap!(unwrap!(buffer.get_any("lines")).get_any("last_line"));
-    for _ in 0..100 {
-        let data = unwrap!(line.get_any("data"));
-        if let Some(()) = find_tag(&data, |tag| if tag == searchterm {
-            Some(())
-        } else {
-            None
-        }) {
-            let prefix = unwrap!(data.get::<ffi::SharedString>("prefix")).0;
-            let message = unwrap!(data.get("message"));
-            return Some((prefix, message));
-        }
-        if let Some(prev) = line.get_any("prev_line") {
-            line = prev;
-        } else {
-            break;
+    if let Some(mut line) = unwrap!(buffer.get_any("lines")).get_any("last_line") {
+        for _ in 0..100 {
+            let data = unwrap!(line.get_any("data"));
+            if let Some(()) = find_tag(&data, |tag| if tag == searchterm {
+                Some(())
+            } else {
+                None
+            }) {
+                let prefix = unwrap!(data.get::<ffi::SharedString>("prefix")).0;
+                let message = unwrap!(data.get("message"));
+                return Some((prefix, message));
+            }
+            if let Some(prev) = line.get_any("prev_line") {
+                line = prev;
+            } else {
+                break;
+            }
         }
     }
     None

@@ -148,6 +148,7 @@ fn on_delete(state: &RcState,
                                   message.author,
                                   message.channel,
                                   message.content);
+            let message = ffi::remove_color(&message);
             let result = outgoing
                 .discord
                 .send_message(dest_chan, &message, "", false);

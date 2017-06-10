@@ -663,6 +663,19 @@ pub fn set_option(name: &str, value: &str) -> String {
     }
 }
 
+pub fn remove_color(string: &str) -> String {
+    extern "C" {
+        fn wdc_string_remove_color(string: *const c_char) -> *mut c_char;
+    }
+    unsafe {
+        let string_c = unwrap1!(CString::new(string));
+        let result_c = wdc_string_remove_color(string_c.as_ptr());
+        let result = CStr::from_ptr(result_c).to_str().unwrap().into();
+        free(result_c as *mut c_void);
+        result
+    }
+}
+
 /*
 pub fn hook_completion<F: Fn(Buffer, Completion) + 'static>(name: &str,
                                                             description: &str,
