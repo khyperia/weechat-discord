@@ -11,3 +11,11 @@ macro_rules! unwrap1 {
         ::ffi::really_bad(concat!("Expression did not unwrap: ", stringify!($expr)).into())
     ))
 }
+
+#[macro_export]
+macro_rules! tryopt {
+   ($expr:expr) => (match $expr {
+       Some(x) => x,
+       None => return None,
+   })
+}

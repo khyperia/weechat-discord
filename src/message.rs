@@ -158,6 +158,26 @@ fn find_old_msg(buffer: &Buffer, message_id: &MessageId) -> Option<(String, Stri
     None
 }
 
+pub fn resolve_message(state: &State,
+                       author: Option<&User>,
+                       content: Option<&str>,
+                       channel_id: ChannelId,
+                       message_id: MessageId)
+                       -> Option<(String, String)> {
+    let author_format = NameFormat::color();
+    if let (Some(author), Some(content)) = (author, content) {
+        let content = replace_mentions(&state, channel_id, content.into());
+        return Some((author.name(&author_format), content.into()));
+    }
+    let channel_ref = tryopt!(state.find_channel(channel_id));
+    let buffer_id = buffer_name(channel_ref).0;
+    let buffer = tryopt!(ffi::Buffer::search(&buffer_id));
+    if let Some(value) = find_old_msg(&buffer, &message_id) {
+        return Some(value);
+    }
+    return None;
+}
+
 pub fn format_message(state: &State,
                       channel_id: ChannelId,
                       message_id: MessageId,
@@ -168,84 +188,45 @@ pub fn format_message(state: &State,
                       self_mentioned: bool,
                       no_highlight: bool)
                       -> Option<FormattedMessage> {
-    let channel_ref = match state.find_channel(channel_id) {
-        Some(ch) => ch,
-        None => return None,
-    };
+    let channel_ref = tryopt!(state.find_channel(channel_id));
     let buffer_id = buffer_name(channel_ref).0;
-    let buffer = match ffi::Buffer::search(&buffer_id) {
-        Some(buf) => buf,
-        None => return None,
-    };
+    let buffer = tryopt!(ffi::Buffer::search(&buffer_id));
     let is_private = if let ChannelRef::Private(_) = channel_ref {
         true
     } else {
         false
     };
-    let author_format = NameFormat::color();
-    let (author, content, no_highlight): (String, String, bool) = match (author, content) {
-        (Some(author), Some(content)) => {
-            (author.name(&author_format),
-             content.into(),
-             no_highlight || author.id() == state.user().id())
+    let no_highlight = no_highlight || author.map(|a| a.id()) == Some(state.user().id());
+    let (author, content) =
+        tryopt!(resolve_message(state, author, content, channel_id, message_id));
+    let tags = {
+        let mut tags = Vec::new();
+        if no_highlight {
+            tags.push("no_highlight".into());
+            tags.push("notify_none".into());
+        } else if self_mentioned {
+            tags.push("notify_highlight".into());
+        } else if is_private {
+            tags.push("notify_private".into());
+        } else {
+            tags.push("notify_message".into());
+        };
+        tags.push(format!("nick_{}", author));
+        tags.push(format!("discord_messageid_{}", message_id.0));
+        tags.join(",".into())
+    };
+    let content = {
+        let mut content_list = Vec::new();
+        if !content.is_empty() {
+            content_list.push(content);
         }
-        (Some(author), None) => {
-            match find_old_msg(&buffer, &message_id) {
-                Some((_, content)) => {
-                    (author.name(&author_format),
-                     content,
-                     no_highlight || author.id == state.user().id)
-                }
-                None => {
-                    (author.name(&author_format),
-                     "<no content>".into(),
-                     no_highlight || author.id == state.user().id)
-                }
+        if let Some(attachments) = attachments {
+            for attachment in attachments {
+                content_list.push(attachment.proxy_url.clone());
             }
         }
-        (None, Some(content)) => {
-            match find_old_msg(&buffer, &message_id) {
-                Some((author, _)) => (author, content.into(), no_highlight),
-                None => ("[unknown]".into(), content.into(), no_highlight),
-            }
-        }
-        (None, None) => {
-            match find_old_msg(&buffer, &message_id) {
-                Some((author, content)) => (author, content, no_highlight),
-                None => ("[unknown]".into(), "".into(), false), // we have absolutely nothing
-            }
-        }
+        content_list.join("\n")
     };
-    let mut tags = Vec::new();
-    if no_highlight {
-        tags.push("no_highlight".into());
-        tags.push("notify_none".into());
-    } else if self_mentioned {
-        tags.push("notify_highlight".into());
-    } else if is_private {
-        tags.push("notify_private".into());
-    } else {
-        tags.push("notify_message".into());
-    };
-    tags.push(format!("nick_{}", author));
-    tags.push(format!("discord_messageid_{}", message_id.0));
-    let tags = tags.join(",".into());
-    let content = replace_mentions(&state, channel_id, content);
-    // first into_iter is the Option iterator
-    let attachments =
-        attachments
-            .into_iter()
-            .flat_map(|attachments| attachments.into_iter().map(|a| a.proxy_url.clone()));
-    let content = if content.is_empty() {
-        None
-    } else {
-        Some(content)
-    };
-    let content = content
-        .into_iter()
-        .chain(attachments)
-        .collect::<Vec<_>>()
-        .join("\n");
     Some(FormattedMessage {
              target: buffer,
              channel: channel_ref.name(&NameFormat::none()),
