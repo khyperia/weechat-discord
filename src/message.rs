@@ -136,26 +136,27 @@ fn find_tag<T, F: Fn(String) -> Option<T>>(line_data: &ffi::WeechatAny, pred: F)
 // returns: (Prefix, Message)
 fn find_old_msg(buffer: &Buffer, message_id: &MessageId) -> Option<(String, String)> {
     let searchterm = format!("discord_messageid_{}", message_id.0);
-    if let Some(mut line) = unwrap!(buffer.get_any("lines")).get_any("last_line") {
-        for _ in 0..100 {
+    let mut result = None;
+    if let Some(mut line) = unwrap!(buffer.get_any("lines")).get_any("first_line") {
+        loop {
             let data = unwrap!(line.get_any("data"));
-            if let Some(()) = find_tag(&data, |tag| if tag == searchterm {
-                Some(())
-            } else {
-                None
-            }) {
+            let found_tag = find_tag(&data, |tag| if tag == searchterm { Some(()) } else { None });
+            if let Some(()) = found_tag {
                 let prefix = unwrap!(data.get::<ffi::SharedString>("prefix")).0;
                 let message = unwrap!(data.get("message"));
-                return Some((prefix, message));
+                result = Some(match result {
+                    Some((prefix, previous)) => (prefix, format!("{}\n{}", previous, message)),
+                    None => (prefix, message),
+                });
             }
-            if let Some(prev) = line.get_any("prev_line") {
-                line = prev;
+            if let Some(next) = line.get_any("next_line") {
+                line = next;
             } else {
                 break;
             }
         }
     }
-    None
+    result
 }
 
 pub fn resolve_message(state: &State,
