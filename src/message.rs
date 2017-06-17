@@ -163,14 +163,19 @@ pub fn resolve_message(state: &State,
                        author: Option<&User>,
                        content: Option<&str>,
                        channel_id: ChannelId,
+                       channel_ref: ChannelRef,
                        message_id: MessageId)
                        -> Option<(String, String)> {
     let author_format = NameFormat::color();
     if let (Some(author), Some(content)) = (author, content) {
         let content = replace_mentions(&state, channel_id, content.into());
+        if let ChannelRef::Public(server, _) = channel_ref {
+            if let Some(member) = server.members.iter().find(|m| m.id() == author.id()) {
+                return Some((member.name(&author_format), content.into()));
+            }
+        }
         return Some((author.name(&author_format), content.into()));
     }
-    let channel_ref = tryopt!(state.find_channel(channel_id));
     let buffer_id = buffer_name(channel_ref).0;
     let buffer = tryopt!(ffi::Buffer::search(&buffer_id));
     if let Some(value) = find_old_msg(&buffer, &message_id) {
@@ -199,7 +204,7 @@ pub fn format_message(state: &State,
     };
     let no_highlight = no_highlight || author.map(|a| a.id()) == Some(state.user().id());
     let (author, content) =
-        tryopt!(resolve_message(state, author, content, channel_id, message_id));
+        tryopt!(resolve_message(state, author, content, channel_id, channel_ref, message_id));
     let tags = {
         let mut tags = Vec::new();
         if no_highlight {
