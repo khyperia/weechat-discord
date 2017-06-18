@@ -195,13 +195,13 @@ pub fn format_message(state: &State,
                       no_highlight: bool)
                       -> Option<FormattedMessage> {
     let channel_ref = tryopt!(state.find_channel(channel_id));
+    let is_private = if let ChannelRef::Public(_, _) = channel_ref {
+        false
+    } else {
+        true
+    };
     let buffer_id = buffer_name(channel_ref).0;
     let buffer = tryopt!(ffi::Buffer::search(&buffer_id));
-    let is_private = if let ChannelRef::Private(_) = channel_ref {
-        true
-    } else {
-        false
-    };
     let no_highlight = no_highlight || author.map(|a| a.id()) == Some(state.user().id());
     let (author, content) =
         tryopt!(resolve_message(state, author, content, channel_id, channel_ref, message_id));

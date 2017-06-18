@@ -45,31 +45,25 @@ pub struct ChannelData {
 }
 
 impl ChannelData {
-    pub fn create(state: &RcState, sender: &OutgoingPipe, id: ChannelId) -> Option<Buffer> {
-        let locked_state = state.read().unwrap();
-        let channel = match locked_state.find_channel(id) {
-            Some(ch) => ch,
-            None => return None,
-        };
+    pub fn create(state: &RcState, sender: &OutgoingPipe, channel: ChannelRef) -> Buffer {
         let (name_id, name_short) = buffer_name(channel);
         if let Some(buffer) = Buffer::search(&name_id) {
-            return Some(buffer);
+            return buffer;
         }
         let me = ChannelData {
             state: state.clone(),
             sender: sender.clone(),
-            id: id,
+            id: channel.id(),
         };
         let me = Box::new(me);
-        Buffer::new(&name_id, me).map(|buffer| {
-            buffer.set("short_name", &name_short);
-            buffer.set("title", "Channel Title");
-            buffer.set("type", "formatted");
-            buffer.set("nicklist", "1");
-            // TODO
-            // buffer.load_backlog();
-            buffer
-        })
+        let buffer = Buffer::new(&name_id, me).unwrap();
+        buffer.set("short_name", &name_short);
+        buffer.set("title", "Channel Title");
+        buffer.set("type", "formatted");
+        buffer.set("nicklist", "1");
+        // TODO
+        // buffer.load_backlog();
+        buffer
     }
 }
 

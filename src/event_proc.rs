@@ -6,27 +6,50 @@ use types::*;
 use connection::*;
 use message::*;
 
+fn sync_buffer(state: &RcState, sender: &OutgoingPipe, channel_ref: ChannelRef) {
+    let buffer = ChannelData::create(state, &sender, channel_ref);
+    if let ChannelRef::Public(server, _) = channel_ref {
+        for member in &server.members {
+            let name = member.user.name(&NameFormat::none());
+            if !buffer.nick_exists(&name) {
+                buffer.add_nick(&name);
+            }
+        }
+    }
+}
+
 pub fn open_and_sync_buffers(state: &RcState, sender: &OutgoingPipe) {
     for server in state.read().unwrap().servers() {
         for channel in &server.channels {
             if channel.kind == ChannelType::Voice {
                 continue;
             }
-            if let Some(buffer) = ChannelData::create(state, &sender, channel.id) {
-                for member in &server.members {
-                    let name = member.user.name(&NameFormat::none());
-                    if !buffer.nick_exists(&name) {
-                        buffer.add_nick(&name);
-                    }
-                }
-            };
+            sync_buffer(state, sender, ChannelRef::Public(&server, channel));
         }
     }
+}
+
+pub fn open_if_private(state: &RcState,
+                       sender: &OutgoingPipe,
+                       channel_id: ChannelId)
+                       -> Option<()> {
+    let state_locked = state.read().unwrap();
+    let channel_ref = tryopt!(state_locked.find_channel(channel_id));
+    let is_private = if let ChannelRef::Public(_, _) = channel_ref {
+        false
+    } else {
+        true
+    };
+    if is_private {
+        sync_buffer(state, sender, channel_ref);
+    }
+    Some(())
 }
 
 pub fn on_event(state: &RcState, sender: &OutgoingPipe, event: Event) {
     match event {
         Event::MessageCreate(ref message) => {
+            open_if_private(state, sender, message.channel_id);
             let is_self = is_self_mentioned(&state.read().unwrap(),
                                             message.channel_id,
                                             message.mention_everyone,
@@ -54,6 +77,7 @@ pub fn on_event(state: &RcState, sender: &OutgoingPipe, event: Event) {
             ref attachments,
             ..
         } => {
+            open_if_private(state, sender, channel_id);
             let is_self = is_self_mentioned(&state.read().unwrap(),
                                             channel_id,
                                             mention_everyone.unwrap_or(false),
@@ -74,6 +98,7 @@ pub fn on_event(state: &RcState, sender: &OutgoingPipe, event: Event) {
             message_id,
             channel_id,
         } => {
+            open_if_private(state, sender, channel_id);
             let message = format_message(&state.read().unwrap(),
                                          channel_id,
                                          message_id,
