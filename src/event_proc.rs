@@ -2,70 +2,45 @@ use discord::*;
 use discord::model::*;
 
 use ffi;
-use types::*;
 use connection::*;
 use message::*;
 
-fn sync_buffer(state: &RcState, sender: &OutgoingPipe, channel_ref: &ChannelRef) {
-    let buffer = ChannelData::create(state, &sender, channel_ref);
-    if let &ChannelRef::Public(ref server, _) = channel_ref {
-        for member in &server.members {
-            let name = member.user.name(&NameFormat::none());
-            if !buffer.nick_exists(&name) {
-                buffer.add_nick(&name);
-            }
-        }
-    }
-}
-
-pub fn open_and_sync_buffers(state: &RcState, sender: &OutgoingPipe) {
-    for server in state.read().unwrap().servers() {
-        ChannelData::create_server(state, server);
+pub fn open_and_sync_buffers(state: &State, discord: &Discord) {
+    for server in state.servers() {
+        ChannelData::create_server(server);
         for channel in &server.channels {
             if channel.kind == ChannelType::Voice {
                 continue;
             }
-            sync_buffer(state, sender, &ChannelRef::Public(&server, channel));
+            match ChannelData::from_channel(state,
+                                            discord,
+                                            ChannelRef::Public(&server, channel),
+                                            true) {
+                Some(x) => x.sync(),
+                None => (),
+            }
         }
     }
 }
 
-pub fn open_if_private(state: &RcState, sender: &OutgoingPipe, channel_id: ChannelId) {
-    // TODO: rework this so we pass channel_ref instead of channel_id
-    // TODO: locking state then passing down unlocked is bad
-    let state_lock = state.read().unwrap();
-    let channel_ref = state_lock.find_channel(channel_id).unwrap();
-    let is_private = if let ChannelRef::Public(_, _) = channel_ref {
-        false
-    } else {
-        true
-    };
-    if is_private {
-        sync_buffer(state, sender, &channel_ref);
-    }
-}
-
-pub fn on_event(state: &RcState, sender: &OutgoingPipe, event: Event) {
+pub fn on_event(state: &State, discord: &Discord, event: Event) -> Option<()> {
     match event {
         Event::MessageCreate(ref message) => {
-            open_if_private(&state, sender, message.channel_id);
-            let state = state.read().unwrap();
-            let channel_ref = state.find_channel(message.channel_id).unwrap();
-            let is_self = is_self_mentioned(&state,
-                                            &channel_ref,
+            let channel =
+                tryopt!(ChannelData::from_discord_event(state, discord, message.channel_id));
+            let is_self = is_self_mentioned(&channel,
                                             message.mention_everyone,
                                             Some(&message.author),
                                             Some(&message.mentions),
                                             Some(&message.mention_roles));
-            let message = format_message(&channel_ref,
-                                         message.id,
-                                         Some(&message.author),
-                                         Some(&message.content),
-                                         Some(&message.attachments),
-                                         "",
-                                         is_self,
-                                         false);
-            message.map(|m| m.print());
+            let message = tryopt!(format_message(&channel,
+                                                 message.id,
+                                                 Some(&message.author),
+                                                 Some(&message.content),
+                                                 Some(&message.attachments),
+                                                 "",
+                                                 is_self));
+            message.print(&channel.buffer);
         }
         Event::MessageUpdate {
             id,
@@ -78,44 +53,30 @@ pub fn on_event(state: &RcState, sender: &OutgoingPipe, event: Event) {
             ref attachments,
             ..
         } => {
-            open_if_private(&state, sender, channel_id);
-            let state = state.read().unwrap();
-            let channel_ref = state.find_channel(channel_id).unwrap();
-            let is_self = is_self_mentioned(&state,
-                                            &channel_ref,
+            let channel = tryopt!(ChannelData::from_discord_event(state, discord, channel_id));
+            let is_self = is_self_mentioned(&channel,
                                             mention_everyone.unwrap_or(false),
                                             author.as_ref(),
                                             mentions.as_ref(),
                                             mention_roles.as_ref());
-            let message = format_message(&channel_ref,
-                                         id,
-                                         author.as_ref(),
-                                         content.as_ref().map(|x| &**x),
-                                         attachments.as_ref(),
-                                         "EDIT: ",
-                                         is_self,
-                                         false);
-            message.map(|m| m.print());
+            let message = tryopt!(format_message(&channel,
+                                                 id,
+                                                 author.as_ref(),
+                                                 content.as_ref().map(|x| &**x),
+                                                 attachments.as_ref(),
+                                                 "EDIT: ",
+                                                 is_self));
+            message.print(&channel.buffer);
         }
         Event::MessageDelete {
             message_id,
             channel_id,
         } => {
-            open_if_private(&state, sender, channel_id);
-            let state = state.read().unwrap();
-            let channel_ref = state.find_channel(channel_id).unwrap();
-            let message = format_message(&channel_ref,
-                                         message_id,
-                                         None,
-                                         None,
-                                         None,
-                                         "DELETE: ",
-                                         false,
-                                         false);
-            message.map(|m| {
-                            m.print();
-                            on_delete(&state, sender, &channel_ref, m);
-                        });
+            let channel = tryopt!(ChannelData::from_discord_event(state, discord, channel_id));
+            let message =
+                tryopt!(format_message(&channel, message_id, None, None, None, "DELETE: ", false));
+            message.print(&channel.buffer);
+            on_delete(&channel, message);
         }
         Event::ServerCreate(PossibleServer::Online(_)) |
         Event::ServerMemberUpdate { .. } |
@@ -126,7 +87,7 @@ pub fn on_event(state: &RcState, sender: &OutgoingPipe, event: Event) {
         Event::ChannelCreate(_) |
         Event::ChannelUpdate(_) |
         Event::ChannelDelete(_) |
-        Event::PresenceUpdate { .. } => open_and_sync_buffers(state, sender),
+        Event::PresenceUpdate { .. } => open_and_sync_buffers(state, discord),
         Event::Resumed { .. } |
         Event::UserUpdate(_) |
         Event::UserNoteUpdate(_, _) |
@@ -159,18 +120,16 @@ pub fn on_event(state: &RcState, sender: &OutgoingPipe, event: Event) {
         Event::ChannelPinsUpdate { .. } |
         Event::Unknown(_, _) |
         _ => (),
-    }
+    };
+    Some(())
 }
 
-fn on_delete(state: &State,
-             outgoing: &OutgoingPipe,
-             channel: &ChannelRef,
-             message: FormattedMessage) {
-    if let &ChannelRef::Public(ref server, _) = channel {
+fn on_delete(channel: &ChannelData, message: FormattedMessage) {
+    if let ChannelRef::Public(ref server, _) = channel.channel {
         if let Some(dest_chan) = ffi::get_option(&format!("on_delete.{}", server.id.0))
                .and_then(|id| id.parse::<u64>().ok())
                .map(|id| ChannelId(id)) {
-            if state.find_channel(dest_chan).is_none() {
+            if channel.state.find_channel(dest_chan).is_none() {
                 return;
             }
             let message = format!("AUTO: Deleted message by {} in {}: {}",
@@ -178,9 +137,7 @@ fn on_delete(state: &State,
                                   message.channel,
                                   message.content);
             let message = ffi::remove_color(&message);
-            let result = outgoing
-                .discord
-                .send_message(dest_chan, &message, "", false);
+            let result = channel.discord.send_message(dest_chan, &message, "", false);
             match result {
                 Ok(_) => (),
                 Err(err) => {

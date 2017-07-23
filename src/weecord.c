@@ -5,9 +5,9 @@
 #define NULL ((void*)0)
 #endif
 
-void
+int
 wdr_init(void);
-void
+int
 wdr_end(void);
 
 WEECHAT_PLUGIN_NAME("weecord");
@@ -24,16 +24,22 @@ weechat_plugin_init(struct t_weechat_plugin* plugin, int argc, char* argv[])
   (void)argc;
   (void)argv;
   weechat_plugin = plugin;
-  wdr_init();
-  return WEECHAT_RC_OK;
+  if (wdr_init()) {
+    return WEECHAT_RC_ERROR;
+  } else {
+    return WEECHAT_RC_OK;
+  }
 }
 
 int
 weechat_plugin_end(struct t_weechat_plugin* plugin)
 {
   (void)plugin;
-  wdr_end();
-  return WEECHAT_RC_OK;
+  if (wdr_end()) {
+    return WEECHAT_RC_ERROR;
+  } else {
+    return WEECHAT_RC_OK;
+  }
 }
 
 struct t_hook*
@@ -123,6 +129,12 @@ wdc_buffer_set(struct t_gui_buffer* buffer,
                const char* value)
 {
   weechat_buffer_set(buffer, property, value);
+}
+
+const char*
+wdc_buffer_get(struct t_gui_buffer* buffer, const char* property)
+{
+  return weechat_buffer_get_string(buffer, property);
 }
 
 void

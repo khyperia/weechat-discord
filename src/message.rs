@@ -7,7 +7,6 @@ use ffi::*;
 use connection::*;
 
 pub struct FormattedMessage {
-    pub target: Buffer,
     pub channel: String,
     pub author: String,
     pub prefix: &'static str,
@@ -16,27 +15,25 @@ pub struct FormattedMessage {
 }
 
 impl FormattedMessage {
-    pub fn print(&self) {
-        self.target
-            .print_tags(&self.tags,
-                        &format!("{}\t{}{}", self.author, self.prefix, self.content))
+    pub fn print(&self, target: &Buffer) {
+        target.print_tags(&self.tags,
+                          &format!("{}\t{}{}", self.author, self.prefix, self.content))
     }
 }
 
-pub fn is_self_mentioned(state: &State,
-                         channel: &ChannelRef,
+pub fn is_self_mentioned(channel: &ChannelData,
                          mention_everyone: bool,
                          author: Option<&User>,
                          mentions: Option<&Vec<User>>,
                          roles: Option<&Vec<RoleId>>)
                          -> bool {
-    if author.map(|a| a.id()) == Some(state.user().id()) {
+    let me = channel.state.user();
+    if author.map(|a| a.id()) == Some(me.id()) {
         return false;
     }
     if mention_everyone {
         return true;
     }
-    let me = state.user();
     if let Some(mentions) = mentions {
         for mention in mentions {
             if me.id == mention.id {
@@ -44,8 +41,8 @@ pub fn is_self_mentioned(state: &State,
             }
         }
     }
-    let server = match channel {
-        &ChannelRef::Public(ref server, _) => server,
+    let server = match channel.channel {
+        ChannelRef::Public(ref server, _) => server,
         _ => return false,
     };
     let roles = if let Some(roles) = roles {
@@ -178,36 +175,27 @@ pub fn resolve_message(author: Option<&User>,
     }
 }
 
-pub fn format_message(channel_ref: &ChannelRef,
+pub fn format_message(channel: &ChannelData,
                       message_id: MessageId,
                       author: Option<&User>,
                       content: Option<&str>,
                       attachments: Option<&Vec<Attachment>>,
                       prefix: &'static str,
-                      self_mentioned: bool,
-                      no_highlight: bool)
+                      self_mentioned: bool)
                       -> Option<FormattedMessage> {
-    let is_private = if let &ChannelRef::Public(_, _) = channel_ref {
+    let is_private = if let ChannelRef::Public(_, _) = channel.channel {
         false
     } else {
         true
     };
-    // TODO: Don't duplicate this code
-    let (server_id, channel_id) = match channel_ref {
-        &ChannelRef::Private(ref private) => (ServerId(0), private.id()),
-        &ChannelRef::Group(ref group) => (ServerId(0), group.id()),
-        &ChannelRef::Public(ref server, ref channel) => (server.id(), channel.id()),
-    };
-    let buffer_id = format!("{}.{}", server_id, channel_id);
-    let buffer = tryopt!(ffi::Buffer::search(&buffer_id));
-    let (author, content) =
-        tryopt!(resolve_message(author, content, &buffer, &channel_ref, message_id));
+    let (author, content) = tryopt!(resolve_message(author,
+                                                    content,
+                                                    &channel.buffer,
+                                                    &channel.channel,
+                                                    message_id));
     let tags = {
         let mut tags = Vec::new();
-        if no_highlight {
-            tags.push("no_highlight".into());
-            tags.push("notify_none".into());
-        } else if self_mentioned {
+        if self_mentioned {
             tags.push("notify_highlight".into());
         } else if is_private {
             tags.push("notify_private".into());
@@ -231,8 +219,7 @@ pub fn format_message(channel_ref: &ChannelRef,
         content_list.join("\n")
     };
     Some(FormattedMessage {
-             target: buffer,
-             channel: channel_ref.name(&NameFormat::none()),
+             channel: channel.channel.name(&NameFormat::none()),
              author: author,
              prefix: prefix,
              content: content,
@@ -240,13 +227,6 @@ pub fn format_message(channel_ref: &ChannelRef,
          })
 }
 
-pub fn format_message_send(state: &RcState,
-                           channel_id: ChannelId,
-                           message: &str)
-                           -> ::std::result::Result<String, String> {
-    if let Some(channel_ref) = state.read().unwrap().find_channel(channel_id) {
-        Ok(replace_mentions_send(&channel_ref, message.into()))
-    } else {
-        Err("Buffer does not exist".into())
-    }
+pub fn format_message_send(channel_ref: &ChannelRef, message: String) -> String {
+    replace_mentions_send(channel_ref, message)
 }

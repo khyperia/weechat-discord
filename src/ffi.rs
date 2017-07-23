@@ -154,13 +154,8 @@ pub fn really_bad(message: String) -> ! {
     panic!(message); // hopefully we hit a catch_unwind
 }
 
-pub trait BufferImpl {
-    fn input(&self, buffer: Buffer, message: &str);
-    fn close(&self, buffer: Buffer);
-}
-
 impl Buffer {
-    pub fn new(name: &str, buffer_impl: Box<BufferImpl>) -> Option<Buffer> {
+    pub fn new(name: &str, on_input: fn(Buffer, &str)) -> Option<Buffer> {
         extern "C" {
             fn wdc_buffer_new(name: *const c_char,
                               pointer: *const c_void,
@@ -183,13 +178,13 @@ impl Buffer {
             let _ = data;
             wrap_panic(|| {
                 let buffer = Buffer { ptr: buffer };
-                let pointer = pointer as *const Box<BufferImpl>;
+                let on_input: fn(Buffer, &str) = unsafe { ::std::mem::transmute(pointer) };
                 let input_data = unsafe { CStr::from_ptr(input_data).to_str() };
                 let input_data = match input_data {
                     Ok(x) => x,
                     Err(_) => return,
                 };
-                unsafe { &*pointer }.input(buffer, input_data);
+                on_input(buffer, input_data);
             });
             0
         }
@@ -197,19 +192,14 @@ impl Buffer {
                                data: *mut c_void,
                                buffer: *mut c_void)
                                -> c_int {
+            let _ = pointer;
             let _ = data;
-            wrap_panic(|| {
-                           let buffer = Buffer { ptr: buffer };
-                           let pointer = pointer as *mut Box<BufferImpl>;
-                           let data = unsafe { Box::from_raw(pointer) };
-                           data.close(buffer);
-                       });
+            let _ = buffer;
             0
         }
         unsafe {
             let name = unwrap1!(CString::new(name));
-            let pointer: Box<Box<BufferImpl>> = Box::new(buffer_impl);
-            let pointer = Box::into_raw(pointer) as *mut c_void;
+            let pointer = on_input as *const c_void;
             let result = wdc_buffer_new(name.as_ptr(), pointer, input_cb, close_cb);
             if result.is_null() {
                 None
@@ -274,6 +264,21 @@ impl Buffer {
             let property = unwrap1!(CString::new(property));
             let value = unwrap1!(CString::new(value));
             wdc_buffer_set(self.ptr, property.as_ptr(), value.as_ptr());
+        }
+    }
+
+    pub fn get(&self, property: &str) -> Option<String> {
+        extern "C" {
+            fn wdc_buffer_get(buffer: *mut c_void, property: *const c_char) -> *const c_char;
+        }
+        unsafe {
+            let property = unwrap1!(CString::new(property));
+            let value = wdc_buffer_get(self.ptr, property.as_ptr());
+            if value.is_null() {
+                None
+            } else {
+                Some(CStr::from_ptr(value).to_string_lossy().into_owned())
+            }
         }
     }
 
@@ -415,10 +420,10 @@ impl Drop for PokeableFd {
     }
 }
 
-fn wrap_panic<F: FnOnce() -> () + UnwindSafe>(f: F) -> () {
+fn wrap_panic<R, F: FnOnce() -> R + UnwindSafe>(f: F) -> Option<R> {
     let result = catch_unwind(f);
     match result {
-        Ok(()) => (),
+        Ok(x) => Some(x),
         Err(err) => {
             let msg = match err.downcast_ref::<String>() {
                 Some(msg) => msg,
@@ -431,21 +436,32 @@ fn wrap_panic<F: FnOnce() -> () + UnwindSafe>(f: F) -> () {
                                                              msg))
                                       });
             let _ = result; // eat error without logging :(
+            None
         }
     }
 }
 
 #[no_mangle]
 #[allow(unused)]
-pub extern "C" fn wdr_end() {
-    // wrap_panic(drop_global_state);
+pub extern "C" fn wdr_init() -> c_int {
+    match wrap_panic(::init) {
+        Some(Some(())) => 0,
+        _ => 1,
+    }
 }
 
 #[no_mangle]
 #[allow(unused)]
-pub extern "C" fn wdr_init() {
-    // TODO
-    wrap_panic(::init);
+pub extern "C" fn wdr_end() -> c_int {
+    match wrap_panic(::end) {
+        Some(Some(())) => 0,
+        _ => 1,
+    }
+}
+
+pub struct HookCommand {
+    _hook: Hook,
+    _callback: Box<Box<FnMut(Buffer, &str)>>,
 }
 
 pub fn hook_command<F: FnMut(Buffer, &str) + 'static>(cmd: &str,
@@ -454,7 +470,7 @@ pub fn hook_command<F: FnMut(Buffer, &str) + 'static>(cmd: &str,
                                                       argdesc: &str,
                                                       compl: &str,
                                                       func: F)
-                                                      -> Option<Hook> {
+                                                      -> Option<HookCommand> {
     type CB = FnMut(Buffer, &str);
     extern "C" {
         fn wdc_hook_command(command: *const c_char,
@@ -504,8 +520,8 @@ pub fn hook_command<F: FnMut(Buffer, &str) + 'static>(cmd: &str,
         let args = unwrap1!(CString::new(args));
         let argdesc = unwrap1!(CString::new(argdesc));
         let compl = unwrap1!(CString::new(compl));
-        let pointer: Box<Box<CB>> = Box::new(Box::new(func));
-        let pointer = Box::into_raw(pointer) as *const c_void; // TODO: Memory leak here.
+        let custom_callback: Box<Box<CB>> = Box::new(Box::new(func));
+        let pointer = &*custom_callback as *const _ as *const c_void;
         let hook = wdc_hook_command(cmd.as_ptr(),
                                     desc.as_ptr(),
                                     args.as_ptr(),
@@ -516,7 +532,10 @@ pub fn hook_command<F: FnMut(Buffer, &str) + 'static>(cmd: &str,
         if hook.is_null() {
             None
         } else {
-            Some(Hook { ptr: hook })
+            Some(HookCommand {
+                     _hook: Hook { ptr: hook },
+                     _callback: custom_callback,
+                 })
         }
     }
 }

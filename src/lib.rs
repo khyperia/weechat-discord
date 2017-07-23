@@ -10,10 +10,7 @@ mod connection;
 mod message;
 mod event_proc;
 
-use discord::*;
-
 use ffi::*;
-use types::*;
 use connection::*;
 
 pub use ffi::wdr_init;
@@ -48,16 +45,30 @@ Example:
     pub const COMPLETIONS: &'static str = "connect || disconnect || token || debug replace";
 }
 
+// *DO NOT* touch this outside of init/end
+static mut MAIN_COMMAND_HOOK: *mut HookCommand = 0 as *mut _;
+
 // Called when plugin is loaded in Weechat
-pub fn init() {
-    let mut state = Box::new(None);
-    let hook = ffi::hook_command(weechat::COMMAND,
-                                 weechat::DESCRIPTION,
-                                 weechat::ARGS,
-                                 weechat::ARGDESC,
-                                 weechat::COMPLETIONS,
-                                 move |buffer, input| run_command(buffer, state.as_mut(), input));
-    ::std::mem::forget(hook); // TODO: Memory leak here.
+pub fn init() -> Option<()> {
+    let hook = tryopt!(ffi::hook_command(weechat::COMMAND,
+                                         weechat::DESCRIPTION,
+                                         weechat::ARGS,
+                                         weechat::ARGDESC,
+                                         weechat::COMPLETIONS,
+                                         move |buffer, input| run_command(buffer, input)));
+    unsafe {
+        MAIN_COMMAND_HOOK = Box::into_raw(Box::new(hook));
+    };
+    Some(())
+}
+
+// Called when plugin is unloaded from Weechat
+pub fn end() -> Option<()> {
+    unsafe {
+        let _ = Box::from_raw(MAIN_COMMAND_HOOK);
+        MAIN_COMMAND_HOOK = ::std::ptr::null_mut();
+    };
+    Some(())
 }
 
 fn user_set_option(name: &str, value: &str) {
@@ -68,49 +79,26 @@ fn command_print(message: &str) {
     MAIN_BUFFER.print(&format!("{}: {}", &weechat::COMMAND, message));
 }
 
-fn debug_command(state: &State, command: &str) {
-    if command == "replace" {
-        for server in state.servers() {
-            MAIN_BUFFER.print(&format!("Server: {}", &server.name));
-            if let Some(chan) = state.find_channel(server.channels[0].id) {
-                for (user, mention) in message::all_names(&chan, &NameFormat::prefix()) {
-                    MAIN_BUFFER.print(&format!("{} : {}", user, mention))
-                }
-            }
-        }
-    }
-}
-
-fn run_command(buffer: Buffer, state: &mut Option<MyConnection>, command: &str) {
+fn run_command(buffer: Buffer, command: &str) {
     let _ = buffer;
     if command == "" {
         command_print("see /help discord for more information")
     } else if command == "connect" {
         match ffi::get_option("token") {
-            Some(t) => {
-                match MyConnection::new(t) {
-                    Ok(con) => *state = Some(con),
-                    Err(err) => {
-                        MAIN_BUFFER.print("Error connecting:");
-                        MAIN_BUFFER.print(&format!("{}", err));
-                    }
-                }
-            }
+            Some(t) => MyConnection::create(t),
             None => {
-                MAIN_BUFFER.print("Error: plugins.var.weecord.token unset. Run:");
-                MAIN_BUFFER.print("/discord token 123456789ABCDEF");
+                command_print("Error: plugins.var.weecord.token unset. Run:");
+                command_print("/discord token 123456789ABCDEF");
                 return;
             }
         };
     } else if command == "disconnect" {
-        *state = None;
+        MyConnection::drop();
         command_print("disconnected");
     } else if command.starts_with("token ") {
         user_set_option("token", &command["token ".len()..]);
     } else if command.starts_with("debug ") {
-        if let &mut Some(ref state) = state {
-            debug_command(&state.state.read().unwrap(), &command["debug ".len()..]);
-        }
+        debug_command(&command["debug ".len()..]);
     } else {
         command_print("unknown command");
     }
