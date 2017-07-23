@@ -24,11 +24,15 @@ impl FormattedMessage {
 }
 
 pub fn is_self_mentioned(state: &State,
-                         channel_id: ChannelId,
+                         channel: &ChannelRef,
                          mention_everyone: bool,
+                         author: Option<&User>,
                          mentions: Option<&Vec<User>>,
                          roles: Option<&Vec<RoleId>>)
                          -> bool {
+    if author.map(|a| a.id()) == Some(state.user().id()) {
+        return false;
+    }
     if mention_everyone {
         return true;
     }
@@ -40,25 +44,27 @@ pub fn is_self_mentioned(state: &State,
             }
         }
     }
-    let server = state
-        .find_channel(channel_id)
-        .and_then(|channel| match channel {
-                      ChannelRef::Public(server, _) => Some(server),
-                      _ => None,
-                  });
-    if let (Some(roles), Some(server)) = (roles, server) {
-        for role in roles {
-            for member in &server.members {
-                if member.user.id == me.id {
-                    for member_role in &member.roles {
-                        if member_role.0 == role.0 {
-                            return true;
-                        }
+    let server = match channel {
+        &ChannelRef::Public(ref server, _) => server,
+        _ => return false,
+    };
+    let roles = if let Some(roles) = roles {
+        roles
+    } else {
+        return false;
+    };
+    for member in &server.members {
+        if member.user.id == me.id {
+            for member_role in &member.roles {
+                for role in roles {
+                    if member_role.0 == role.0 {
+                        return true;
                     }
                 }
             }
+            break;
         }
-    };
+    }
     false
 }
 
@@ -94,12 +100,8 @@ pub fn all_names(chan_ref: &ChannelRef, format: &NameFormat) -> Vec<(String, Str
     names
 }
 
-fn replace_mentions_send(state: &State, channel_id: ChannelId, mut content: String) -> String {
-    let channel = match state.find_channel(channel_id) {
-        Some(channel) => channel,
-        None => return content,
-    };
-    for (name, mention) in all_names(&channel, &NameFormat::prefix()) {
+fn replace_mentions_send(channel: &ChannelRef, mut content: String) -> String {
+    for (name, mention) in all_names(channel, &NameFormat::prefix()) {
         if content.contains(&*name) {
             content = content.replace(&*name, &format!("{}", mention));
         }
@@ -107,11 +109,7 @@ fn replace_mentions_send(state: &State, channel_id: ChannelId, mut content: Stri
     content
 }
 
-fn replace_mentions(state: &State, channel_id: ChannelId, mut content: String) -> String {
-    let channel = match state.find_channel(channel_id) {
-        Some(ch) => ch,
-        None => return content.into(),
-    };
+fn replace_mentions(channel: &ChannelRef, mut content: String) -> String {
     for (name, mention) in all_names(&channel, &NameFormat::color_prefix()) {
         // check contains to reduce allocations
         if content.contains(&mention) {
@@ -134,7 +132,7 @@ fn find_tag<T, F: Fn(String) -> Option<T>>(line_data: &ffi::WeechatAny, pred: F)
 }
 
 // returns: (Prefix, Message)
-fn find_old_msg(buffer: &Buffer, message_id: &MessageId) -> Option<(String, String)> {
+fn find_old_msg(buffer: &Buffer, message_id: MessageId) -> Option<(String, String)> {
     let searchterm = format!("discord_messageid_{}", message_id.0);
     let mut result = None;
     if let Some(mut line) = unwrap!(buffer.get_any("lines")).get_any("first_line") {
@@ -159,33 +157,28 @@ fn find_old_msg(buffer: &Buffer, message_id: &MessageId) -> Option<(String, Stri
     result
 }
 
-pub fn resolve_message(state: &State,
-                       author: Option<&User>,
+pub fn resolve_message(author: Option<&User>,
                        content: Option<&str>,
-                       channel_id: ChannelId,
-                       channel_ref: ChannelRef,
+                       buffer: &Buffer,
+                       channel_ref: &ChannelRef,
                        message_id: MessageId)
                        -> Option<(String, String)> {
     let author_format = NameFormat::color();
     if let (Some(author), Some(content)) = (author, content) {
-        let content = replace_mentions(&state, channel_id, content.into());
-        if let ChannelRef::Public(server, _) = channel_ref {
+        let content = replace_mentions(channel_ref, content.into());
+        // Check for member-defined name instead of user name
+        if let &ChannelRef::Public(ref server, _) = channel_ref {
             if let Some(member) = server.members.iter().find(|m| m.id() == author.id()) {
                 return Some((member.name(&author_format), content.into()));
             }
         }
-        return Some((author.name(&author_format), content.into()));
+        Some((author.name(&author_format), content.into()))
+    } else {
+        find_old_msg(buffer, message_id)
     }
-    let buffer_id = buffer_name(channel_ref).0;
-    let buffer = tryopt!(ffi::Buffer::search(&buffer_id));
-    if let Some(value) = find_old_msg(&buffer, &message_id) {
-        return Some(value);
-    }
-    return None;
 }
 
-pub fn format_message(state: &State,
-                      channel_id: ChannelId,
+pub fn format_message(channel_ref: &ChannelRef,
                       message_id: MessageId,
                       author: Option<&User>,
                       content: Option<&str>,
@@ -194,17 +187,21 @@ pub fn format_message(state: &State,
                       self_mentioned: bool,
                       no_highlight: bool)
                       -> Option<FormattedMessage> {
-    let channel_ref = tryopt!(state.find_channel(channel_id));
-    let is_private = if let ChannelRef::Public(_, _) = channel_ref {
+    let is_private = if let &ChannelRef::Public(_, _) = channel_ref {
         false
     } else {
         true
     };
-    let buffer_id = buffer_name(channel_ref).0;
+    // TODO: Don't duplicate this code
+    let (server_id, channel_id) = match channel_ref {
+        &ChannelRef::Private(ref private) => (ServerId(0), private.id()),
+        &ChannelRef::Group(ref group) => (ServerId(0), group.id()),
+        &ChannelRef::Public(ref server, ref channel) => (server.id(), channel.id()),
+    };
+    let buffer_id = format!("{}.{}", server_id, channel_id);
     let buffer = tryopt!(ffi::Buffer::search(&buffer_id));
-    let no_highlight = no_highlight || author.map(|a| a.id()) == Some(state.user().id());
     let (author, content) =
-        tryopt!(resolve_message(state, author, content, channel_id, channel_ref, message_id));
+        tryopt!(resolve_message(author, content, &buffer, &channel_ref, message_id));
     let tags = {
         let mut tags = Vec::new();
         if no_highlight {
@@ -243,6 +240,13 @@ pub fn format_message(state: &State,
          })
 }
 
-pub fn format_message_send(state: &RcState, channel_id: ChannelId, message: &str) -> String {
-    replace_mentions_send(&state.read().unwrap(), channel_id, message.into())
+pub fn format_message_send(state: &RcState,
+                           channel_id: ChannelId,
+                           message: &str)
+                           -> ::std::result::Result<String, String> {
+    if let Some(channel_ref) = state.read().unwrap().find_channel(channel_id) {
+        Ok(replace_mentions_send(&channel_ref, message.into()))
+    } else {
+        Err("Buffer does not exist".into())
+    }
 }

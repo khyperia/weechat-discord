@@ -6,9 +6,9 @@ use types::*;
 use connection::*;
 use message::*;
 
-fn sync_buffer(state: &RcState, sender: &OutgoingPipe, channel_ref: ChannelRef) {
+fn sync_buffer(state: &RcState, sender: &OutgoingPipe, channel_ref: &ChannelRef) {
     let buffer = ChannelData::create(state, &sender, channel_ref);
-    if let ChannelRef::Public(server, _) = channel_ref {
+    if let &ChannelRef::Public(ref server, _) = channel_ref {
         for member in &server.members {
             let name = member.user.name(&NameFormat::none());
             if !buffer.nick_exists(&name) {
@@ -25,39 +25,39 @@ pub fn open_and_sync_buffers(state: &RcState, sender: &OutgoingPipe) {
             if channel.kind == ChannelType::Voice {
                 continue;
             }
-            sync_buffer(state, sender, ChannelRef::Public(&server, channel));
+            sync_buffer(state, sender, &ChannelRef::Public(&server, channel));
         }
     }
 }
 
-pub fn open_if_private(state: &RcState,
-                       sender: &OutgoingPipe,
-                       channel_id: ChannelId)
-                       -> Option<()> {
-    let state_locked = state.read().unwrap();
-    let channel_ref = tryopt!(state_locked.find_channel(channel_id));
+pub fn open_if_private(state: &RcState, sender: &OutgoingPipe, channel_id: ChannelId) {
+    // TODO: rework this so we pass channel_ref instead of channel_id
+    // TODO: locking state then passing down unlocked is bad
+    let state_lock = state.read().unwrap();
+    let channel_ref = state_lock.find_channel(channel_id).unwrap();
     let is_private = if let ChannelRef::Public(_, _) = channel_ref {
         false
     } else {
         true
     };
     if is_private {
-        sync_buffer(state, sender, channel_ref);
+        sync_buffer(state, sender, &channel_ref);
     }
-    Some(())
 }
 
 pub fn on_event(state: &RcState, sender: &OutgoingPipe, event: Event) {
     match event {
         Event::MessageCreate(ref message) => {
-            open_if_private(state, sender, message.channel_id);
-            let is_self = is_self_mentioned(&state.read().unwrap(),
-                                            message.channel_id,
+            open_if_private(&state, sender, message.channel_id);
+            let state = state.read().unwrap();
+            let channel_ref = state.find_channel(message.channel_id).unwrap();
+            let is_self = is_self_mentioned(&state,
+                                            &channel_ref,
                                             message.mention_everyone,
+                                            Some(&message.author),
                                             Some(&message.mentions),
                                             Some(&message.mention_roles));
-            let message = format_message(&state.read().unwrap(),
-                                         message.channel_id,
+            let message = format_message(&channel_ref,
                                          message.id,
                                          Some(&message.author),
                                          Some(&message.content),
@@ -78,14 +78,16 @@ pub fn on_event(state: &RcState, sender: &OutgoingPipe, event: Event) {
             ref attachments,
             ..
         } => {
-            open_if_private(state, sender, channel_id);
-            let is_self = is_self_mentioned(&state.read().unwrap(),
-                                            channel_id,
+            open_if_private(&state, sender, channel_id);
+            let state = state.read().unwrap();
+            let channel_ref = state.find_channel(channel_id).unwrap();
+            let is_self = is_self_mentioned(&state,
+                                            &channel_ref,
                                             mention_everyone.unwrap_or(false),
+                                            author.as_ref(),
                                             mentions.as_ref(),
                                             mention_roles.as_ref());
-            let message = format_message(&state.read().unwrap(),
-                                         channel_id,
+            let message = format_message(&channel_ref,
                                          id,
                                          author.as_ref(),
                                          content.as_ref().map(|x| &**x),
@@ -99,9 +101,10 @@ pub fn on_event(state: &RcState, sender: &OutgoingPipe, event: Event) {
             message_id,
             channel_id,
         } => {
-            open_if_private(state, sender, channel_id);
-            let message = format_message(&state.read().unwrap(),
-                                         channel_id,
+            open_if_private(&state, sender, channel_id);
+            let state = state.read().unwrap();
+            let channel_ref = state.find_channel(channel_id).unwrap();
+            let message = format_message(&channel_ref,
                                          message_id,
                                          None,
                                          None,
@@ -111,7 +114,7 @@ pub fn on_event(state: &RcState, sender: &OutgoingPipe, event: Event) {
                                          false);
             message.map(|m| {
                             m.print();
-                            on_delete(state, sender, channel_id, m);
+                            on_delete(&state, sender, &channel_ref, m);
                         });
         }
         Event::ServerCreate(PossibleServer::Online(_)) |
@@ -159,15 +162,15 @@ pub fn on_event(state: &RcState, sender: &OutgoingPipe, event: Event) {
     }
 }
 
-fn on_delete(state: &RcState,
+fn on_delete(state: &State,
              outgoing: &OutgoingPipe,
-             source_chan: ChannelId,
+             channel: &ChannelRef,
              message: FormattedMessage) {
-    if let Some(ChannelRef::Public(server, _)) = state.read().unwrap().find_channel(source_chan) {
+    if let &ChannelRef::Public(ref server, _) = channel {
         if let Some(dest_chan) = ffi::get_option(&format!("on_delete.{}", server.id.0))
                .and_then(|id| id.parse::<u64>().ok())
                .map(|id| ChannelId(id)) {
-            if state.read().unwrap().find_channel(dest_chan).is_none() {
+            if state.find_channel(dest_chan).is_none() {
                 return;
             }
             let message = format!("AUTO: Deleted message by {} in {}: {}",
