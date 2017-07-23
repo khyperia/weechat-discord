@@ -27,15 +27,15 @@ pub fn buffer_name(channel: ChannelRef) -> (String, String) {
     };
     let channel_name = channel.name(&NameFormat::prefix());
     let channel_id = channel.id();
-    let server_name = server.map(|s| s.name(&NameFormat::none()));
     let server_id = server.map_or(ServerId(0), |s| s.id());
     let buffer_id = format!("{}.{}", server_id.0, channel_id.0);
-    let buffer_name = if let Some(server_name) = server_name {
-        format!("{} {}", server_name, channel_name)
-    } else {
-        channel_name
-    };
-    (buffer_id, buffer_name)
+    (buffer_id, channel_name)
+}
+
+pub fn server_name(server: &LiveServer) -> (String, String) {
+    let name = server.name(&NameFormat::none());
+    let id = format!("{}", server.id().0);
+    (id, name)
 }
 
 pub struct ChannelData {
@@ -44,10 +44,43 @@ pub struct ChannelData {
     id: ChannelId,
 }
 
+struct ServerData {}
+
+impl BufferImpl for ServerData {
+    fn input(&self, buffer: Buffer, message: &str) {
+        let _ = buffer;
+        let _ = message;
+    }
+
+    fn close(&self, buffer: Buffer) {
+        let _ = buffer;
+    }
+}
+
 impl ChannelData {
+    pub fn create_server(state: &RcState, server: &LiveServer) {
+        // This is never used, it's just a buffer placeholder for formatting
+        let (name_id, name_short) = server_name(server);
+        if let Some(buffer) = Buffer::search(&name_id) {
+            // ensure things are up to date
+            buffer.set("short_name", &name_short);
+            return;
+        }
+        let buffer = Buffer::new(&name_id, Box::new(ServerData {})).unwrap();
+        buffer.set("short_name", &name_short);
+        buffer.set("title", "Channel Title");
+        buffer.set("type", "formatted");
+        buffer.set("nicklist", "1");
+        buffer.set("localvar_set_type", "server");
+        buffer.set("localvar_set_nick", &state.read().unwrap().user().username);
+    }
+
     pub fn create(state: &RcState, sender: &OutgoingPipe, channel: ChannelRef) -> Buffer {
         let (name_id, name_short) = buffer_name(channel);
         if let Some(buffer) = Buffer::search(&name_id) {
+            // ensure things are up to date
+            buffer.set("short_name", &name_short);
+            buffer.set("localvar_set_nick", &state.read().unwrap().user().username);
             return buffer;
         }
         let me = ChannelData {
@@ -61,6 +94,15 @@ impl ChannelData {
         buffer.set("title", "Channel Title");
         buffer.set("type", "formatted");
         buffer.set("nicklist", "1");
+        // Undocumented localvar found by digging through source.
+        // Causes indentation on private channels.
+        if let ChannelRef::Public(_, _) = channel {
+            buffer.set("localvar_set_type", "channel");
+        } else {
+            buffer.set("localvar_set_type", "private");
+        }
+        // Also undocumented, causes [nick] prefix.
+        buffer.set("localvar_set_nick", &state.read().unwrap().user().username);
         // TODO
         // buffer.load_backlog();
         buffer

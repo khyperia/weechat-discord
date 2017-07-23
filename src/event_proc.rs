@@ -20,6 +20,7 @@ fn sync_buffer(state: &RcState, sender: &OutgoingPipe, channel_ref: ChannelRef) 
 
 pub fn open_and_sync_buffers(state: &RcState, sender: &OutgoingPipe) {
     for server in state.read().unwrap().servers() {
+        ChannelData::create_server(state, server);
         for channel in &server.channels {
             if channel.kind == ChannelType::Voice {
                 continue;
