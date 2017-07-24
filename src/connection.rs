@@ -26,11 +26,11 @@ impl<'dis> ChannelData<'dis> {
             .set("short_name", &self.channel.name(&NameFormat::prefix()));
         self.buffer.set("title", "Channel Title");
         self.buffer.set("type", "formatted");
-        self.buffer.set("nicklist", "1");
         // Undocumented localvar found by digging through source.
         // Causes indentation on channels.
         if let ChannelRef::Public(_, _) = self.channel {
             self.buffer.set("localvar_set_type", "channel");
+            self.buffer.set("nicklist", "1");
         } else {
             self.buffer.set("localvar_set_type", "private");
         }
@@ -83,19 +83,23 @@ impl<'dis> ChannelData<'dis> {
             ChannelRef::Public(ref server, ref channel) => (server.id(), channel.id()),
         };
         let name_id = format!("{}.{}", server_id, channel_id);
-        let buffer = if let Some(buffer) = Buffer::search(&name_id) {
-            buffer
+        let (buffer, is_new) = if let Some(buffer) = Buffer::search(&name_id) {
+            (buffer, false)
         } else if auto_open {
-            Buffer::new(&name_id, buffer_input).unwrap()
+            (Buffer::new(&name_id, buffer_input).unwrap(), true)
         } else {
             return None;
         };
-        Some(ChannelData {
-                 state: state,
-                 discord: discord,
-                 channel: channel,
-                 buffer: buffer,
-             })
+        let result = ChannelData {
+            state: state,
+            discord: discord,
+            channel: channel,
+            buffer: buffer,
+        };
+        if is_new {
+            result.sync();
+        }
+        Some(result)
     }
 
     pub fn from_discord_event(state: &'dis State,
@@ -149,6 +153,18 @@ fn buffer_input(buffer: Buffer, message: &str) {
     }
 }
 
+pub fn debug_command(command: &str) {
+    if let Some(x) = MyConnection::magic() {
+        x.debug_command(command)
+    }
+}
+
+pub fn query_command(buffer: &Buffer, user: &str) {
+    if let Some(x) = MyConnection::magic() {
+        x.query_command(buffer, user)
+    }
+}
+
 pub struct MyConnection {
     state: State,
     discord: Discord,
@@ -158,12 +174,6 @@ pub struct MyConnection {
 }
 
 static mut MAGIC: *mut MyConnection = 0 as *mut _;
-
-pub fn debug_command(command: &str) {
-    if let Some(x) = MyConnection::magic() {
-        x.debug_command(command)
-    }
-}
 
 impl MyConnection {
     pub fn magic() -> Option<&'static mut MyConnection> {
@@ -211,6 +221,38 @@ impl MyConnection {
                     }
                 }
             }
+        }
+    }
+
+    fn query_command(&mut self, buffer: &Buffer, nick: &str) {
+        if let Some(user) = message::all_names_everywhere(&self.state,
+                                                          |name, user| if name == nick {
+                                                              Some(user.id())
+                                                          } else {
+                                                              None
+                                                          }) {
+            for existing in self.state.private_channels() {
+                if existing.recipient.id() == user {
+                    ChannelData::from_channel(&self.state,
+                                              &self.discord,
+                                              ChannelRef::Private(existing),
+                                              true);
+                    return;
+                }
+            }
+            match self.discord.create_private_channel(user) {
+                Ok(new_channel) => {
+                    ChannelData::from_channel(&self.state,
+                                              &self.discord,
+                                              ChannelRef::Private(&new_channel),
+                                              true);
+                }
+                Err(err) => {
+                    buffer.print(&format!("Unable to create a PM with {}: {}", user, err));
+                }
+            }
+        } else {
+            buffer.print(&format!("User not found: {}", nick));
         }
     }
 

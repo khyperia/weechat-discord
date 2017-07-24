@@ -65,6 +65,35 @@ pub fn is_self_mentioned(channel: &ChannelData,
     false
 }
 
+pub fn all_names_everywhere<T, F: FnMut(String, &User) -> Option<T>>(state: &State,
+                                                                     mut f: F)
+                                                                     -> Option<T> {
+    let format = NameFormat::none();
+    for server in state.servers() {
+        for member in &server.members {
+            if let Some(x) = f(member.user.name(&format), &member.user) {
+                return Some(x);
+            }
+            if let Some(x) = f(member.name(&format), &member.user) {
+                return Some(x);
+            }
+        }
+    }
+    for group in state.groups().values() {
+        for recipient in &group.recipients {
+            if let Some(x) = f(recipient.name(&format), &recipient) {
+                return Some(x);
+            }
+        }
+    }
+    for private in state.private_channels() {
+        if let Some(x) = f(private.recipient.name(&format), &private.recipient) {
+            return Some(x);
+        }
+    }
+    return None;
+}
+
 pub fn all_names(chan_ref: &ChannelRef, format: &NameFormat) -> Vec<(String, String)> {
     let mut names = Vec::new();
     match *chan_ref {

@@ -97,6 +97,8 @@ fn run_command(buffer: Buffer, command: &str) {
         command_print("disconnected");
     } else if command.starts_with("token ") {
         user_set_option("token", &command["token ".len()..]);
+    } else if command.starts_with("query ") {
+        query_command(&buffer, &command["debug ".len()..]);
     } else if command.starts_with("debug ") {
         debug_command(&command["debug ".len()..]);
     } else {
