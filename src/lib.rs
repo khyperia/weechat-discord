@@ -20,8 +20,7 @@ mod weechat {
     pub const COMMAND: &'static str = "discord";
     pub const DESCRIPTION: &'static str = "\
 Discord from the comfort of your favorite command-line IRC client!
-This plugin is a work in progress and could use your help.
-Check it out at https://github.com/khyperia/weechat-discord
+Source code available at https://github.com/khyperia/weechat-discord
 
 Options used:
 
@@ -35,14 +34,18 @@ plugins.var.weecord.rename.<id> = <string>
                      token <token>";
     pub const ARGDESC: &'static str = "\
 connect: sign in to discord and open chat buffers
-disconnect: sign out of Discord and close chat buffers
+disconnect: sign out of Discord
 token: set Discord login token
+query: open PM buffer with user
 
 Example:
   /discord token 123456789ABCDEF
   /discord connect
+  /discord query khyperia
+  /discord disconnect
 ";
-    pub const COMPLETIONS: &'static str = "connect || disconnect || token || debug replace";
+    pub const COMPLETIONS: &'static str = "\
+connect || disconnect || token || debug replace || query";
 }
 
 // *DO NOT* touch this outside of init/end
@@ -80,7 +83,7 @@ fn command_print(message: &str) {
 }
 
 fn run_command(buffer: Buffer, command: &str) {
-    let _ = buffer;
+    // TODO: Add rename command
     if command == "" {
         command_print("see /help discord for more information")
     } else if command == "connect" {
@@ -96,7 +99,8 @@ fn run_command(buffer: Buffer, command: &str) {
         MyConnection::drop();
         command_print("disconnected");
     } else if command.starts_with("token ") {
-        user_set_option("token", &command["token ".len()..]);
+        let token = &command["token ".len()..];
+        user_set_option("token", token.trim_matches('"'));
     } else if command.starts_with("query ") {
         query_command(&buffer, &command["debug ".len()..]);
     } else if command.starts_with("debug ") {

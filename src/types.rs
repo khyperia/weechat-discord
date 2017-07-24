@@ -7,8 +7,7 @@ use discord::model::{Member, CurrentUser, LiveServer, Mention, Group};
 use ffi;
 
 fn get_rename_option<Id: DiscordId>(id: Id) -> Option<String> {
-    let option = format!("rename.{}", id.raw_id());
-    ffi::get_option(&option)
+    ffi::get_option(&format!("rename.{}", id.raw_id()))
 }
 
 pub trait Mentionable {
