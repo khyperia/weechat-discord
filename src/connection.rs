@@ -19,25 +19,26 @@ pub struct ChannelData<'a> {
 
 impl<'dis> ChannelData<'dis> {
     pub fn sync(&self) {
-        self.buffer
-            .set("localvar_set_channelid",
-                 &format!("{}", self.channel.id().0));
-        self.buffer
-            .set("short_name", &self.channel.name(&NameFormat::prefix()));
-        self.buffer.set("title", "Channel Title");
+        let name = self.channel.name(&NameFormat::prefix());
+        let channel_id = format!("{}", self.channel.id().0);
+        self.buffer.set("localvar_set_channelid", &channel_id);
+        self.buffer.set("short_name", &name);
         self.buffer.set("type", "formatted");
         // Undocumented localvar found by digging through source.
         // Causes indentation on channels.
-        if let ChannelRef::Public(_, _) = self.channel {
+        let title = if let ChannelRef::Public(srv, _) = self.channel {
             self.buffer.set("localvar_set_type", "channel");
             self.buffer.set("nicklist", "1");
+            format!("{} - {}", srv.name(&NameFormat::prefix()), name)
         } else {
             self.buffer.set("localvar_set_type", "private");
-        }
+            name
+        };
         // TODO: buffer.set("localvar_set_type", "server");
         // Also undocumented, causes [nick] prefix.
         self.buffer
             .set("localvar_set_nick", &self.state.user().username);
+        self.buffer.set("title", &title);
         if let ChannelRef::Public(ref server, _) = self.channel {
             // TODO: This is suuuuper slow
             for member in &server.members {
