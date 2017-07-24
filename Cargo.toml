@@ -14,9 +14,13 @@ crate-type = ["dylib"]
 
 [dependencies]
 libc = "*"
+clippy = {version = "*", optional = true}
 
 [dependencies.discord]
 git = "https://github.com/SpaceManiac/discord-rs.git"
 # disable "voice" -> opus/sodiumoxide
 default-features = false
 features = []
+
+[features]
+default = []

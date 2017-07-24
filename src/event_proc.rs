@@ -12,19 +12,18 @@ pub fn open_and_sync_buffers(state: &State, discord: &Discord) {
             if channel.kind == ChannelType::Voice {
                 continue;
             }
-            match ChannelData::from_channel(state,
-                                            discord,
-                                            ChannelRef::Public(&server, channel),
-                                            true) {
-                Some(x) => x.sync(),
-                None => (),
+            if let Some(x) = ChannelData::from_channel(state,
+                                                       discord,
+                                                       ChannelRef::Public(server, channel),
+                                                       true) {
+                x.sync()
             }
         }
     }
 }
 
-pub fn on_event(state: &State, discord: &Discord, event: Event) -> Option<()> {
-    match event {
+pub fn on_event(state: &State, discord: &Discord, event: &Event) -> Option<()> {
+    match *event {
         Event::MessageCreate(ref message) => {
             let channel =
                 tryopt!(ChannelData::from_discord_event(state, discord, message.channel_id));
@@ -76,7 +75,7 @@ pub fn on_event(state: &State, discord: &Discord, event: Event) -> Option<()> {
             let message =
                 tryopt!(format_message(&channel, message_id, None, None, None, "DELETE: ", false));
             message.print(&channel.buffer);
-            on_delete(&channel, message);
+            on_delete(&channel, &message);
         }
         Event::ServerCreate(PossibleServer::Online(_)) |
         Event::ServerMemberUpdate { .. } |
@@ -124,11 +123,11 @@ pub fn on_event(state: &State, discord: &Discord, event: Event) -> Option<()> {
     Some(())
 }
 
-fn on_delete(channel: &ChannelData, message: FormattedMessage) {
-    if let ChannelRef::Public(ref server, _) = channel.channel {
+fn on_delete(channel: &ChannelData, message: &FormattedMessage) {
+    if let ChannelRef::Public(server, _) = channel.channel {
         if let Some(dest_chan) = ffi::get_option(&format!("on_delete.{}", server.id.0))
                .and_then(|id| id.parse::<u64>().ok())
-               .map(|id| ChannelId(id)) {
+               .map(ChannelId) {
             if channel.state.find_channel(dest_chan).is_none() {
                 return;
             }

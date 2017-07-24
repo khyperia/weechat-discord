@@ -12,7 +12,7 @@ else ifneq ($(wildcard /usr/local/opt/openssl/lib),)
 	export OPENSSL_LIB_DIR=/usr/local/opt/openssl/lib
 endif
 
-.PHONY: all install install_test test run format
+.PHONY: all install install_test test run format clippy
 all: src/*
 	cargo build --release
 
@@ -43,3 +43,6 @@ $(testdir)/plugins: | $(testdir)
 format:
 	cargo fmt -- --write-mode=overwrite
 	clang-format -style=mozilla -i src/*.c
+
+clippy:
+	rustup run nightly cargo rustc --features clippy -- -Z no-trans -Z extra-plugins=clippy

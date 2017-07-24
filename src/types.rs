@@ -6,7 +6,7 @@ use discord::model::{UserId, RoleId, EmojiId, ServerId, ChannelId};
 use discord::model::{Member, CurrentUser, LiveServer, Mention, Group};
 use ffi;
 
-fn get_rename_option<Id: DiscordId>(id: Id) -> Option<String> {
+fn get_rename_option<Id: DiscordId>(id: &Id) -> Option<String> {
     ffi::get_option(&format!("rename.{}", id.raw_id()))
 }
 
@@ -218,7 +218,7 @@ pub trait Name: Id {
     fn name_internal(&self) -> (&'static str, Cow<str>);
     fn name(&self, fmt: &NameFormat) -> String {
         let (prefix, raw_name) = self.name_internal();
-        let rename = get_rename_option(self.id());
+        let rename = get_rename_option(&self.id());
         let name: Cow<str> = rename.map_or(raw_name, |x| x.into());
         fmt.format(prefix, &name)
     }

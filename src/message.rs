@@ -42,7 +42,7 @@ pub fn is_self_mentioned(channel: &ChannelData,
         }
     }
     let server = match channel.channel {
-        ChannelRef::Public(ref server, _) => server,
+        ChannelRef::Public(server, _) => server,
         _ => return false,
     };
     let roles = if let Some(roles) = roles {
@@ -81,7 +81,7 @@ pub fn all_names_everywhere<T, F: FnMut(String, &User) -> Option<T>>(state: &Sta
     }
     for group in state.groups().values() {
         for recipient in &group.recipients {
-            if let Some(x) = f(recipient.name(&format), &recipient) {
+            if let Some(x) = f(recipient.name(&format), recipient) {
                 return Some(x);
             }
         }
@@ -91,7 +91,7 @@ pub fn all_names_everywhere<T, F: FnMut(String, &User) -> Option<T>>(state: &Sta
             return Some(x);
         }
     }
-    return None;
+    None
 }
 
 pub fn all_names(chan_ref: &ChannelRef, format: &NameFormat) -> Vec<(String, String)> {
@@ -129,14 +129,14 @@ pub fn all_names(chan_ref: &ChannelRef, format: &NameFormat) -> Vec<(String, Str
 fn replace_mentions_send(channel: &ChannelRef, mut content: String) -> String {
     for (name, mention) in all_names(channel, &NameFormat::prefix()) {
         if content.contains(&*name) {
-            content = content.replace(&*name, &format!("{}", mention));
+            content = content.replace(&*name, &mention);
         }
     }
     content
 }
 
 fn replace_mentions(channel: &ChannelRef, mut content: String) -> String {
-    for (name, mention) in all_names(&channel, &NameFormat::color_prefix()) {
+    for (name, mention) in all_names(channel, &NameFormat::color_prefix()) {
         // check contains to reduce allocations
         if content.contains(&mention) {
             content = content.replace(&mention, &name);
@@ -193,7 +193,7 @@ pub fn resolve_message(author: Option<&User>,
     if let (Some(author), Some(content)) = (author, content) {
         let content = replace_mentions(channel_ref, content.into());
         // Check for member-defined name instead of user name
-        if let &ChannelRef::Public(ref server, _) = channel_ref {
+        if let ChannelRef::Public(server, _) = *channel_ref {
             if let Some(member) = server.members.iter().find(|m| m.id() == author.id()) {
                 return Some((member.name(&author_format), content.into()));
             }

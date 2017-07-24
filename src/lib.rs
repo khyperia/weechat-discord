@@ -58,7 +58,7 @@ pub fn init() -> Option<()> {
                                          weechat::ARGS,
                                          weechat::ARGDESC,
                                          weechat::COMPLETIONS,
-                                         move |buffer, input| run_command(buffer, input)));
+                                         move |buffer, input| run_command(&buffer, input)));
     unsafe {
         MAIN_COMMAND_HOOK = Box::into_raw(Box::new(hook));
     };
@@ -82,7 +82,7 @@ fn command_print(message: &str) {
     MAIN_BUFFER.print(&format!("{}: {}", &weechat::COMMAND, message));
 }
 
-fn run_command(buffer: Buffer, command: &str) {
+fn run_command(buffer: &Buffer, command: &str) {
     // TODO: Add rename command
     if command == "" {
         command_print("see /help discord for more information")
@@ -102,7 +102,7 @@ fn run_command(buffer: Buffer, command: &str) {
         let token = &command["token ".len()..];
         user_set_option("token", token.trim_matches('"'));
     } else if command.starts_with("query ") {
-        query_command(&buffer, &command["debug ".len()..]);
+        query_command(buffer, &command["debug ".len()..]);
     } else if command.starts_with("debug ") {
         debug_command(&command["debug ".len()..]);
     } else {

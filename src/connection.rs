@@ -39,7 +39,7 @@ impl<'dis> ChannelData<'dis> {
         self.buffer
             .set("localvar_set_nick", &self.state.user().username);
         self.buffer.set("title", &title);
-        if let ChannelRef::Public(ref server, _) = self.channel {
+        if let ChannelRef::Public(server, _) = self.channel {
             // TODO: This is suuuuper slow
             for member in &server.members {
                 let name = member.name(&NameFormat::none());
@@ -79,9 +79,9 @@ impl<'dis> ChannelData<'dis> {
                         auto_open: bool)
                         -> Option<ChannelData<'dis>> {
         let (server_id, channel_id) = match channel {
-            ChannelRef::Private(ref private) => (ServerId(0), private.id()),
-            ChannelRef::Group(ref group) => (ServerId(0), group.id()),
-            ChannelRef::Public(ref server, ref channel) => (server.id(), channel.id()),
+            ChannelRef::Private(private) => (ServerId(0), private.id()),
+            ChannelRef::Group(group) => (ServerId(0), group.id()),
+            ChannelRef::Public(server, channel) => (server.id(), channel.id()),
         };
         let name_id = format!("{}.{}", server_id, channel_id);
         let (buffer, is_new) = if let Some(buffer) = Buffer::search(&name_id) {
@@ -207,7 +207,7 @@ impl MyConnection {
         unsafe {
             if !MAGIC.is_null() {
                 let _ = Box::from_raw(MAGIC);
-                MAGIC = 0 as *mut _;
+                MAGIC = ::std::ptr::null_mut();
             }
         }
     }
@@ -273,7 +273,7 @@ impl MyConnection {
                 }
             };
             self.state.update(&event);
-            event_proc::on_event(&self.state, &self.discord, event);
+            event_proc::on_event(&self.state, &self.discord, &event);
         }
     }
 
