@@ -5,6 +5,11 @@ This project is sort of stable and usable (it's a side project that gets occasio
 
 ### Building
 
+Dependencies:
+
+* Weechat developer libraries. Usually called `weechat-dev`, or sometimes just `weechat` includes them.
+* OpenSSL 1.0 (NOT 1.1). Usually called `openssl-1.0`, `libssl1.0-dev`, or something similar. *This is important*. The Makefile will set up paths to override the version to 1.0, so if you get errors building openssl-sys-extras, run `cargo clean` and use the Makefile.
+
 The makefile should give enough information for build commands. Here's the essentials:
 
     cd weechat-discord # or wherever you cloned it
