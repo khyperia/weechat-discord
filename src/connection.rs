@@ -73,11 +73,46 @@ impl<'dis> ChannelData<'dis> {
         }
     }
 
+    pub fn mute_channels(settings: &UserServerSettings) {
+        for channel in &settings.channel_overrides {
+            if channel.muted {
+                let key = format!("mute.{}", channel.channel_id);
+                if get_option(&key).map_or(false, |x| !x.is_empty()) {
+                    // already set
+                    continue;
+                }
+                MAIN_BUFFER.print(&set_option(&key, "1"));
+            }
+        }
+    }
+
+    fn is_channel_blocked(state: &'dis State, channel: ChannelRef<'dis>) -> bool {
+        if let ChannelRef::Public(server, channel) = channel {
+            if channel.kind == ChannelType::Voice {
+                return true;
+            }
+            // ugh. Why is this not a public API in discord-rs?
+            let read_messages = Permissions::from_bits(1 << 10).unwrap();
+            let permissions = server.permissions_for(channel.id(), state.user().id());
+            let can_read = permissions.contains(read_messages);
+            if !can_read {
+                return true;
+            }
+        }
+        if let Some(muted) = get_option(&format!("mute.{}", channel.id())) {
+            return muted.parse::<i32>().ok().map_or(false, |x| x != 0);
+        }
+        false
+    }
+
     pub fn from_channel(state: &'dis State,
                         discord: &'dis Discord,
                         channel: ChannelRef<'dis>,
                         auto_open: bool)
                         -> Option<ChannelData<'dis>> {
+        if Self::is_channel_blocked(state, channel) {
+            return None;
+        }
         let (server_id, channel_id) = match channel {
             ChannelRef::Private(private) => (ServerId(0), private.id()),
             ChannelRef::Group(group) => (ServerId(0), group.id()),
@@ -297,6 +332,11 @@ impl MyConnection {
     fn new(token: String) -> discord::Result<MyConnection> {
         let discord = Discord::from_user_token(&token)?;
         let (connection, ready) = discord.connect()?;
+        if let Some(ref settings) = ready.user_server_settings {
+            for setting in settings {
+                ChannelData::mute_channels(setting);
+            }
+        }
         let state = State::new(ready);
         connection.sync_servers(&state.all_servers()[..]);
         let (send, recv) = channel();

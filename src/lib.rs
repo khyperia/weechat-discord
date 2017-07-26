@@ -22,11 +22,20 @@ mod weechat {
 Discord from the comfort of your favorite command-line IRC client!
 Source code available at https://github.com/khyperia/weechat-discord
 
+How does channel muting work?
+If plugins.var.weecord.mute.<channel_id> is set to the literal \"1\", \
+then that buffer will not be opened. When a Discord channel is muted \
+(in the official client), weechat-discord detects this and automatically \
+sets this setting for you. If you would like to override this behavior \
+and un-mute the channel, set the setting to \"0\". (Do not unset it, as it \
+will just get automatically filled in again)
+
 Options used:
 
 plugins.var.weecord.token = <discord_token>
-plugins.var.weecord.on_delete.<server_id> = <channel_id>
 plugins.var.weecord.rename.<id> = <string>
+plugins.var.weecord.mute.<channel_id> = (0|1)
+plugins.var.weecord.on_delete.<server_id> = <channel_id>
 ";
     pub const ARGS: &'static str = "\
                      connect

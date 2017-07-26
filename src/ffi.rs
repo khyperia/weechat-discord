@@ -668,9 +668,14 @@ pub fn set_option(name: &str, value: &str) -> String {
         wdc_config_set_plugin(name_c.as_ptr(), value_c.as_ptr())
     };
     match (result, before) {
-        (0, Some(before)) => format!("option successfully changed from {} to {}", before, value),
-        (0, None) | (1, None) => format!("option successfully set to {}", value),
-        (1, Some(before)) => format!("option already contained {}", before),
+        (0, Some(before)) => {
+            format!("option {} successfully changed from {} to {}",
+                    name,
+                    before,
+                    value)
+        }
+        (0, None) | (1, None) => format!("option {} successfully set to {}", name, value),
+        (1, Some(before)) => format!("option {} already contained {}", name, before),
         (2, _) => format!("option {} not found", name),
         (_, Some(before)) => {
             format!("error when setting option {} to {} (was {})",

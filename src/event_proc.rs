@@ -9,9 +9,6 @@ pub fn open_and_sync_buffers(state: &State, discord: &Discord) {
     for server in state.servers() {
         ChannelData::create_server(server);
         for channel in &server.channels {
-            if channel.kind == ChannelType::Voice {
-                continue;
-            }
             if let Some(x) = ChannelData::from_channel(state,
                                                        discord,
                                                        ChannelRef::Public(server, channel),
@@ -87,11 +84,11 @@ pub fn on_event(state: &State, discord: &Discord, event: &Event) -> Option<()> {
         Event::ChannelUpdate(_) |
         Event::ChannelDelete(_) |
         Event::PresenceUpdate { .. } => open_and_sync_buffers(state, discord),
+        Event::UserServerSettingsUpdate(ref settings) => ChannelData::mute_channels(settings),
         Event::Resumed { .. } |
         Event::UserUpdate(_) |
         Event::UserNoteUpdate(_, _) |
         Event::UserSettingsUpdate { .. } |
-        Event::UserServerSettingsUpdate(_) |
         Event::VoiceStateUpdate(_, _) |
         Event::VoiceServerUpdate { .. } |
         Event::CallCreate(_) |
