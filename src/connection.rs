@@ -331,14 +331,15 @@ impl MyConnection {
 
     fn new(token: String) -> discord::Result<MyConnection> {
         let discord = Discord::from_user_token(&token)?;
-        let (connection, ready) = discord.connect()?;
+        let (mut connection, ready) = discord.connect()?;
         if let Some(ref settings) = ready.user_server_settings {
             for setting in settings {
                 ChannelData::mute_channels(setting);
             }
         }
-        let state = State::new(ready);
+        let mut state = State::new(ready);
         connection.sync_servers(&state.all_servers()[..]);
+        connection.download_all_members(&mut state);
         let (send, recv) = channel();
         let pipe = PokeableFd::new(move || if let Some(x) = Self::magic() {
                                        x.on_poke()

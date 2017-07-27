@@ -111,7 +111,7 @@ fn run_command(buffer: &Buffer, command: &str) {
         let token = &command["token ".len()..];
         user_set_option("token", token.trim_matches('"'));
     } else if command.starts_with("query ") {
-        query_command(buffer, &command["debug ".len()..]);
+        query_command(buffer, &command["query ".len()..]);
     } else if command.starts_with("debug ") {
         debug_command(&command["debug ".len()..]);
     } else {
