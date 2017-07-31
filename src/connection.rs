@@ -86,8 +86,8 @@ impl<'dis> ChannelData<'dis> {
         }
     }
 
-    fn is_channel_blocked(state: &'dis State, channel: ChannelRef<'dis>) -> bool {
-        if let ChannelRef::Public(server, channel) = channel {
+    fn is_channel_blocked(channel: ChannelRef<'dis>) -> bool {
+        if let ChannelRef::Public(_, channel) = channel {
             if channel.kind == ChannelType::Voice {
                 return true;
             }
@@ -113,7 +113,7 @@ impl<'dis> ChannelData<'dis> {
                         channel: ChannelRef<'dis>,
                         auto_open: bool)
                         -> Option<ChannelData<'dis>> {
-        if Self::is_channel_blocked(state, channel) {
+        if Self::is_channel_blocked(channel) {
             return None;
         }
         let (server_id, channel_id) = match channel {

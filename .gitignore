@@ -1,4 +1,3 @@
 /target/
 /test_dir/
 *.bk
-/Cargo.lock

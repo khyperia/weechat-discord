@@ -16,11 +16,14 @@ endif
 all: src/*
 	cargo build --release
 
+all_debug: src/*
+	cargo build
+
 install: all | $(installdir)/plugins
 	cp target/release/libweecord.* $(installdir)/plugins
 
-install_test: all | $(testdir)/plugins
-	cp target/release/libweecord.* $(testdir)/plugins
+install_test: all_debug | $(testdir)/plugins
+	cp target/debug/libweecord.* $(testdir)/plugins
 
 run: install
 	weechat -a
