@@ -91,13 +91,16 @@ impl<'dis> ChannelData<'dis> {
             if channel.kind == ChannelType::Voice {
                 return true;
             }
+            // TODO: Something is horribly broken here. (issue #33)
+            //  Likely discord-rs's permissions_for is broken.
+            //  Ripping it out for now :(
             // ugh. Why is this not a public API in discord-rs?
-            let read_messages = Permissions::from_bits(1 << 10).unwrap();
-            let permissions = server.permissions_for(channel.id(), state.user().id());
-            let can_read = permissions.contains(read_messages);
-            if !can_read {
-                return true;
-            }
+            //let read_messages = Permissions::from_bits(1 << 10).unwrap();
+            //let permissions = server.permissions_for(channel.id(), state.user().id());
+            //let can_read = permissions.contains(read_messages);
+            //if !can_read {
+            //    return true;
+            //}
         }
         if let Some(muted) = get_option(&format!("mute.{}", channel.id())) {
             return muted.parse::<i32>().ok().map_or(false, |x| x != 0);
