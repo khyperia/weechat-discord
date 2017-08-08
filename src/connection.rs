@@ -18,36 +18,51 @@ pub struct ChannelData<'a> {
 }
 
 impl<'dis> ChannelData<'dis> {
-    pub fn sync(&self) {
+    pub fn sync_name(&self) {
         let name = self.channel.name(&NameFormat::prefix());
-        let channel_id = format!("{}", self.channel.id().0);
-        self.buffer.set("localvar_set_channelid", &channel_id);
         self.buffer.set("short_name", &name);
-        self.buffer.set("type", "formatted");
-        // Undocumented localvar found by digging through source.
-        // Causes indentation on channels.
         let title = if let ChannelRef::Public(srv, _) = self.channel {
-            self.buffer.set("localvar_set_type", "channel");
-            self.buffer.set("nicklist", "1");
             format!("{} - {}", srv.name(&NameFormat::prefix()), name)
         } else {
-            self.buffer.set("localvar_set_type", "private");
             name
         };
-        // TODO: buffer.set("localvar_set_type", "server");
-        // Also undocumented, causes [nick] prefix.
+        self.buffer.set("title", &title);
+    }
+
+    pub fn sync_self_nick(&self) {
+        // Undocumented, causes [nick] prefix.
         self.buffer
             .set("localvar_set_nick", &self.state.user().username);
-        self.buffer.set("title", &title);
+    }
+
+    fn sync_init(&self) {
+        self.buffer.set("type", "formatted");
+        let channel_id = format!("{}", self.channel.id().0);
+        self.buffer.set("localvar_set_channelid", &channel_id);
+        // localvar_set_type is an undocumented localvar found by digging
+        // through source. Causes indentation on channels.
         if let ChannelRef::Public(server, _) = self.channel {
-            // TODO: This is suuuuper slow
+            self.buffer.set("localvar_set_type", "channel");
+            self.buffer.set("nicklist", "1");
             for member in &server.members {
                 let name = member.name(&NameFormat::none());
-                if !self.buffer.nick_exists(&name) {
-                    self.buffer.add_nick(&name);
-                }
+                self.buffer.add_nick(&name);
             }
-        }
+        } else {
+            self.buffer.set("localvar_set_type", "private");
+        };
+        self.sync_name();
+        self.sync_self_nick();
+    }
+
+    pub fn add_member(&self, member: &Member) {
+        let name = member.name(&NameFormat::none());
+        self.buffer.add_nick(&name);
+    }
+
+    pub fn remove_member(&self, member: &Member) {
+        let name = member.name(&NameFormat::none());
+        self.buffer.remove_nick(&name);
     }
 
     fn from_buffer_impl(state: &'dis State, buffer: &Buffer) -> Option<ChannelRef<'dis>> {
@@ -136,7 +151,7 @@ impl<'dis> ChannelData<'dis> {
             buffer: buffer,
         };
         if is_new {
-            result.sync();
+            result.sync_init();
         }
         Some(result)
     }
@@ -349,7 +364,15 @@ impl MyConnection {
                                    });
         let pipe_poker = pipe.get_poker();
         let listen_thread = spawn(move || Self::run_thread(connection, pipe_poker, send));
-        event_proc::open_and_sync_buffers(&state, &discord);
+        for server in state.servers() {
+            ChannelData::create_server(server);
+            for channel in &server.channels {
+                ChannelData::from_channel(&state,
+                                          &discord,
+                                          ChannelRef::Public(server, channel),
+                                          true);
+            }
+        }
         // let completion_hook =
         // ffi::hook_completion("weecord_completion", "",
         // move |buffer, completion| {

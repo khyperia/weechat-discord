@@ -282,6 +282,7 @@ impl Buffer {
         }
     }
 
+    /*
     pub fn nick_exists(&self, nick: &str) -> bool {
         extern "C" {
             fn wdc_nicklist_nick_exists(buffer: *const c_void, nick: *const c_char) -> c_int;
@@ -291,6 +292,7 @@ impl Buffer {
             wdc_nicklist_nick_exists(self.ptr, nick.as_ptr()) != 0
         }
     }
+    */
 
     pub fn add_nick(&self, nick: &str) {
         extern "C" {
@@ -302,7 +304,6 @@ impl Buffer {
         }
     }
 
-    /*
     pub fn remove_nick(&self, nick: &str) {
         extern "C" {
             fn wdc_nicklist_remove_nick(buffer: *const c_void, nick: *const c_char);
@@ -312,7 +313,6 @@ impl Buffer {
             wdc_nicklist_remove_nick(self.ptr, nick.as_ptr());
         }
     }
-    */
 }
 
 /*
