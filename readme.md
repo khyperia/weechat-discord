@@ -1,7 +1,13 @@
 Weechat Discord
 ===============
 
-This project is sort of stable and usable (it's a side project that gets occasionally updated) - please report any bugs you have!
+### Deadness indicator: 100%
+
+I'm done. I'm 900% done. Someone can feel free to fork this jar of horrors, but I'm done dealing with the nightmare of the Discord protocol. The PR on discord-api-docs removing the /ack endpoint documentation was the last straw, it was *clearly* never intended to be used as a client. As there is no API that's actually intended to be used, I'm not going to maintain this steaming pile of Rust FFI barbarity.
+
+I'll leave things the way they are so folks can still use it, but don't expect me to be enthusiastic about bug reports.
+
+---
 
 ### Building
 
